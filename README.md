@@ -129,3 +129,25 @@ npm test             # 34 tests: mapping, substitution, precedence, and a real
 `tests/integration.test.ts` bootstraps the real tool registry and the real
 `mcp-client`, writes a `.mcp.json`, and asserts the fixture's tool lands in the
 registry — the tests exercise the actual client rather than a stand-in.
+
+## Verification against the real harness
+
+Beyond the tests above, the plugin was verified on 1 October 2026 against the
+published `@deepseek-ai/dsh` CLI (0.2.0-rc.2), driven with an isolated
+`DSH_HOME` so no user profile was touched. What that established, and how:
+
+| Claim | Evidence |
+| --- | --- |
+| The loader resolves this package from a profile and composes its row | `dsh --profile <p> --dump-config` prints the `workspace-mcp` row with the shipped config, under `# == @l33tdawg/dsh-workspace-mcp` |
+| The entry loads as TypeScript through the harness loader | the same import succeeds from a profile directory under plain Node 22 type stripping, so no build step is needed |
+| `apply` runs inside a real harness process, in the workspace directory | temporary instrumentation in `apply` recorded `cwd=<workspace> root=""` during a headless boot |
+| The workspace file is found and parsed | the same instrumentation recorded `.mcp.json exists=true`, and a deliberately malformed file produced the plugin's own `invalid JSON` diagnostic |
+| A declared server is mounted and its tool registered | booting the real `ToolRuntime` and the real `mcp-client` against a workspace `.mcp.json` registered `mcp__echo__echo` |
+
+Two notes for anyone repeating this. `root` defaults to the harness process
+working directory, which for a profile boot is the workspace the session was
+started in — verified rather than assumed, and the reason `files: ['.mcp.json']`
+finds the workspace file and not the profile's own directory. And the plugin's
+diagnostics go to the harness logger: a failed mount appears in the harness's
+logs, not on stdout.
+
