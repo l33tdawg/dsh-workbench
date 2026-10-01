@@ -332,7 +332,10 @@ describe('activation', () => {
     assert.equal(mounted[0].config.serverName, 'sage')
     assert.equal(mounted[0].config.transport, 'stdio')
     assert.equal(mounted[0].config.toolCallTimeoutMs, 60_000)
-    assert.equal(mounted[0].config.cwd, '')
+    // A server that declares no cwd is pinned to the workspace. Inheriting the
+    // harness process cwd instead is what made SAGE derive a profile-named
+    // identity in a GUI host, where that directory is not the workspace.
+    assert.equal(mounted[0].config.cwd, root)
     // The namespace is normalized into a plugin FUNCTION carrying `inject`:
     // an object plugin's inject is ignored, which silently breaks ctx.tools.
     assert.equal(typeof mounted[0].module, 'function')
@@ -398,5 +401,123 @@ describe('activation', () => {
     assert.equal(mounted.length, 1)
     assert.equal(typeof mounted[0].module, 'function')
     assert.deepEqual([...mounted[0].module.inject], ['tools'])
+  })
+})
+
+describe('per-agent mounting', () => {
+  /** A fake agent whose scope context records what was mounted into it. */
+  function fakeAgent(id, cwd) {
+    const mounted = []
+    return {
+      mounted,
+      agent: {
+        id,
+        session: { header: cwd === undefined ? {} : { cwd } },
+        ctx: {
+          plugin: (module, cfg) => {
+            mounted.push({ module, config: cfg })
+            return Promise.resolve()
+          },
+          logger: { info: () => {}, warn: () => {}, error: () => {} },
+        },
+      },
+    }
+  }
+
+  /**
+   * A fake context whose dynamic `agents` injection exposes a mutable live list,
+   * standing in for the harness AgentRegistry.
+   */
+  function perAgentContext(live) {
+    const listeners = new Map()
+    const scoped = {
+      agents: { roots: () => [...live] },
+      on: (event, listener) => listeners.set(event, listener),
+    }
+    return {
+      listeners,
+      ctx: {
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+        inject: (names, callback) => {
+          assert.deepEqual([...names], ['agents'])
+          callback(scoped)
+        },
+      },
+    }
+  }
+
+  /** apply() mounts agents without awaiting them, so let those promises settle. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  it('defaults perAgent off and reads it from the loader', () => {
+    assert.equal(config({}).perAgent, false)
+    assert.equal(config({ perAgent: true }).perAgent, true)
+  })
+
+  it('mounts in each root agent scope, from that agent session workspace', async () => {
+    const first = workspaceWith({ '.mcp.json': { mcpServers: { sage: { command: '/bin/sage-gui' } } } })
+    const second = workspaceWith({ '.mcp.json': { mcpServers: { other: { command: '/bin/other' } } } })
+    const one = fakeAgent('one', first)
+    const two = fakeAgent('two', second)
+    const { ctx } = perAgentContext([one.agent, two.agent])
+    await apply(ctx, config({ perAgent: true, clientModule: clientModule() }))
+    await settle()
+    // Each workspace's own file is read, and each child runs in its own workspace.
+    assert.equal(one.mounted.length, 1)
+    assert.equal(one.mounted[0].config.serverName, 'sage')
+    assert.equal(one.mounted[0].config.cwd, first)
+    assert.equal(two.mounted.length, 1)
+    assert.equal(two.mounted[0].config.serverName, 'other')
+    assert.equal(two.mounted[0].config.cwd, second)
+  })
+
+  it('mounts for a root agent created after activation, exactly once', async () => {
+    const later = workspaceWith({ '.mcp.json': { mcpServers: { late: { command: '/bin/late' } } } })
+    const live = []
+    const { ctx, listeners } = perAgentContext(live)
+    await apply(ctx, config({ perAgent: true, clientModule: clientModule() }))
+    const created = listeners.get('agent/created')
+    assert.equal(typeof created, 'function')
+
+    const entry = fakeAgent('late', later)
+    live.push(entry.agent)
+    created({ agent: entry.agent })
+    await settle()
+    assert.equal(entry.mounted.length, 1)
+    assert.equal(entry.mounted[0].config.cwd, later)
+
+    created({ agent: entry.agent })
+    await settle()
+    assert.equal(entry.mounted.length, 1)
+  })
+
+  it('ignores an agent the registry does not report as a root', async () => {
+    const child = fakeAgent('child', '/work/levelup')
+    const { ctx, listeners } = perAgentContext([])
+    await apply(ctx, config({ perAgent: true, clientModule: clientModule() }))
+    listeners.get('agent/created')({ agent: child.agent })
+    await settle()
+    assert.equal(child.mounted.length, 0)
+  })
+
+  it('falls back to the configured root when a session recorded no cwd', async () => {
+    const root = workspaceWith({ '.mcp.json': { mcpServers: { sage: { command: '/bin/sage-gui' } } } })
+    const entry = fakeAgent('no-cwd', undefined)
+    const { ctx } = perAgentContext([entry.agent])
+    await apply(ctx, config({ perAgent: true, root, clientModule: clientModule() }))
+    await settle()
+    assert.equal(entry.mounted.length, 1)
+    assert.equal(entry.mounted[0].config.cwd, root)
+  })
+
+  it('still mounts process-wide when perAgent is not set', async () => {
+    const root = workspaceWith({ '.mcp.json': { mcpServers: { sage: { command: '/bin/sage-gui' } } } })
+    const live = []
+    const { ctx, mounted } = fakeContext()
+    const withInject = { ...ctx, inject: () => { throw new Error('inject must not be used') } }
+    await apply(withInject, config({ root, clientModule: clientModule() }))
+    // fakeContext records process-wide mounts on the plugin context itself.
+    assert.equal(mounted.length, 1)
+    assert.equal(live.length, 0)
   })
 })

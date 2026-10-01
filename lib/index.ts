@@ -49,6 +49,7 @@ const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000
  * @property {Record<string, string>} env Values available to `${env:NAME}` references when permitted.
  * @property {boolean} allowEnv Whether the files may read the harness environment at all.
  * @property {Record<string, string>} envOverrides Values forced on every spawned server.
+ * @property {boolean} perAgent Mount once per live root agent, from that agent's session workspace.
  * @property {unknown} clientModule The `mcp-client` namespace to mount, when a deployment pins one.
  * @property {boolean} verbose Whether to report every file read and server mounted.
  * @property {number} toolCallTimeoutMs Timeout for one tool call or resource request.
@@ -62,6 +63,7 @@ const FIELD_TYPES = {
   allowEnv: 'boolean',
   envOverrides: 'strings-map',
   sage: 'sage-config',
+  perAgent: 'boolean',
   clientModule: 'any',
   verbose: 'boolean',
   toolCallTimeoutMs: 'number',
@@ -133,6 +135,7 @@ export const Config = {
           allowEnv: input.allowEnv ?? false,
           envOverrides: input.envOverrides ?? {},
           sage: input.sage,
+          perAgent: input.perAgent ?? false,
           clientModule: input.clientModule,
           verbose: input.verbose ?? false,
           toolCallTimeoutMs: input.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS,
@@ -305,46 +308,122 @@ export function toSageConfig(workspace, sage, toolCallTimeoutMs) {
 }
 
 /**
- * Read the workspace's declared MCP servers, then its SAGE server, and register each one.
- * @param ctx - Cordis context carrying the tool registry.
- * @param config - Resolved plugin configuration.
- * @returns A promise that settles once every server is mounted.
+ * Report file-read and entry-mapping diagnostics through a mounting context.
+ * @param target - Context whose logger receives the diagnostics.
+ * @param diagnostics - Diagnostics collected while reading and mapping.
  */
-export async function apply(ctx, config) {
-  const logger = config.verbose ? (message) => ctx.logger.info('[workspace-mcp] %s', message) : undefined
-  const root = config.root === '' ? process.cwd() : resolve(config.root)
+function reportDiagnostics(target, diagnostics) {
+  for (const diagnostic of diagnostics) {
+    const where = diagnostic.server === undefined ? diagnostic.file : `${diagnostic.server} (${diagnostic.file})`
+    if (diagnostic.level === 'error') target.logger.error('[workspace-mcp] %s: %s', where, diagnostic.reason)
+    else target.logger.warn('[workspace-mcp] %s: %s', where, diagnostic.reason)
+  }
+}
+
+/**
+ * Read one workspace's declared servers and mount them, plus its SAGE server, into a context.
+ *
+ * Every mounted server is given `cwd` when it declares none. Without that the
+ * child inherits the harness process working directory, which in a GUI host is
+ * the profile directory rather than the session's workspace. SAGE derives an
+ * agent identity from that directory, so the child would sign as the profile
+ * instead of as the workspace it belongs to.
+ *
+ * @param target - Context to mount into: the plugin context for a process-wide mount, or one agent's scope.
+ * @param workspace - Absolute workspace directory whose files are read.
+ * @param config - Resolved plugin configuration.
+ * @param clientModule - The `mcp-client` namespace to mount.
+ * @param logger - Sink for verbose progress, or undefined when not verbose.
+ * @returns A promise that settles once every mounted client has activated.
+ */
+async function mountWorkspace(target, workspace, config, clientModule, logger) {
   const env = config.allowEnv ? { ...process.env, ...config.env } : undefined
   const context = {
-    scope: { workspaceFolder: root, cwd: root, ...(env === undefined ? {} : { env }) },
+    scope: { workspaceFolder: workspace, cwd: workspace, ...(env === undefined ? {} : { env }) },
     envOverrides: config.envOverrides,
   }
-  const read = readWorkspaceFiles(root, config.files, context, logger)
+  const read = readWorkspaceFiles(workspace, config.files, context, logger)
   const accepted = toClientConfigs(read.entries, context)
-  for (const diagnostic of [...read.diagnostics, ...accepted.diagnostics]) {
-    const where = diagnostic.server === undefined ? diagnostic.file : `${diagnostic.server} (${diagnostic.file})`
-    if (diagnostic.level === 'error') ctx.logger.error('[workspace-mcp] %s: %s', where, diagnostic.reason)
-    else ctx.logger.warn('[workspace-mcp] %s: %s', where, diagnostic.reason)
-  }
+  reportDiagnostics(target, [...read.diagnostics, ...accepted.diagnostics])
 
-  const servers = [...accepted.entries.map((entry) => toClientConfig(entry, config.envOverrides, config.toolCallTimeoutMs))]
+  const servers = accepted.entries.map((entry) => {
+    const server = toClientConfig(entry, config.envOverrides, config.toolCallTimeoutMs)
+    return server.cwd === undefined || server.cwd === '' ? { ...server, cwd: workspace } : server
+  })
   const sageName = config.sage?.serverName ?? 'sage'
   // A workspace that declares its own SAGE server wins. Mounting the configured
   // one as well would claim the same serverName twice, which `mcp-client`
   // refuses by aborting the boot. The workspace file is also where SAGE itself
   // reads a pinned identity from, so it is the more specific declaration.
   if (config.sage !== undefined && !servers.some((server) => server.serverName === sageName)) {
-    servers.push(toSageConfig(root, config.sage, config.toolCallTimeoutMs))
+    servers.push(toSageConfig(workspace, config.sage, config.toolCallTimeoutMs))
   } else if (config.sage !== undefined) {
     logger?.(`SAGE server declared by the workspace as "${sageName}"; using it instead of the configured default`)
   }
   if (servers.length === 0) {
-    logger?.(`no MCP servers declared in ${root}, and no SAGE workspace agent configured`)
+    logger?.(`no MCP servers declared in ${workspace}, and no SAGE workspace agent configured`)
     return
   }
 
+  await mountServers(target, clientModule, servers)
+  logger?.(`mounted ${servers.length} server(s) for ${workspace}`)
+}
+
+/**
+ * The workspace one agent works in: the working directory its session recorded.
+ *
+ * A session that recorded none — detached, legacy, or created without one — falls
+ * back to the configured root, or to the process working directory when empty.
+ *
+ * @param agent - Live agent whose session header is inspected.
+ * @param config - Resolved plugin configuration.
+ * @returns An absolute workspace directory.
+ */
+function agentWorkspace(agent, config) {
+  const recorded = agent.session?.header?.cwd
+  if (typeof recorded === 'string' && recorded !== '') return recorded
+  return config.root === '' ? process.cwd() : resolve(config.root)
+}
+
+/**
+ * Read the workspace's declared MCP servers, then its SAGE server, and register each one.
+ *
+ * With `perAgent` the servers are mounted once per live root agent, in that
+ * agent's own scope and from that agent's session workspace, so each workspace
+ * gets its own SAGE identity even where the harness process working directory is
+ * not the workspace. Without it the mount is process-wide, exactly as before.
+ *
+ * @param ctx - Cordis context carrying the tool registry.
+ * @param config - Resolved plugin configuration.
+ * @returns A promise that settles once every server is mounted.
+ */
+export async function apply(ctx, config) {
+  const logger = config.verbose ? (message) => ctx.logger.info('[workspace-mcp] %s', message) : undefined
   const clientModule = await resolveClientModule(config.clientModule)
-  await mountServers(ctx, clientModule, servers)
-  logger?.(`mounted ${servers.length} server(s) for ${root}`)
+
+  if (config.perAgent === true) {
+    const mounted = new Set()
+    const mountAgent = (agent) => {
+      if (mounted.has(agent.id)) return
+      mounted.add(agent.id)
+      Promise.resolve(mountWorkspace(agent.ctx, agentWorkspace(agent, config), config, clientModule, logger))
+        .catch((error) => {
+          ctx.logger.error('[workspace-mcp] agent "%s": mount failed: %s', agent.id, error?.message ?? String(error))
+        })
+    }
+    // `agents` is injected dynamically: a host with no agent registry (a bare CLI
+    // boot) must still load this plugin, it simply never enters this mode.
+    ctx.inject(['agents'], (scoped) => {
+      for (const agent of scoped.agents.roots()) mountAgent(agent)
+      scoped.on('agent/created', ({ agent }) => {
+        if (scoped.agents.roots().includes(agent)) mountAgent(agent)
+      })
+    })
+    return
+  }
+
+  const root = config.root === '' ? process.cwd() : resolve(config.root)
+  await mountWorkspace(ctx, root, config, clientModule, logger)
 }
 
 export { mapConfigDocument, toClientConfig, toClientConfigs }

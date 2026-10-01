@@ -102,9 +102,21 @@ row; override any of its config fields from the profile patch layer as usual.
 | `allowEnv` | `false` | Whether files may resolve `${env:NAME}` references at all. |
 | `env` | `{}` | Values `${env:NAME}` may resolve to, **only** consulted when `allowEnv` is true. |
 | `envOverrides` | `{}` | Values forced onto every spawned server, overriding what the file declares. |
+| `perAgent` | `false` | Mount once per live root agent, in that agent's scope, from the workspace its session recorded. |
 | `clientModule` | unset | The `@deepseek-ai/dsh-mcp-client` namespace to mount. See below. |
 | `verbose` | `false` | Log every file read and every server mounted. |
 | `toolCallTimeoutMs` | `60000` | Timeout for one tool call or resource request. |
+
+### Per-agent mounting
+
+`perAgent: true` mounts the servers once per live root agent instead of once per
+process, into that agent's own tool scope and from the workspace its session
+recorded. A process-wide mount cannot be correct in a GUI host: there the Harness
+process working directory is the *profile* directory, not the session workspace,
+so every workspace resolves the same files and — for SAGE — derives the same
+profile-named agent. With this mode the workspace's own `.mcp.json` is read, and
+every child runs with that workspace as its `cwd`, which is what SAGE derives an
+agent identity from.
 
 ### Substitutions
 
