@@ -78,6 +78,10 @@ function isSageConfig(value) {
   if (value.command !== undefined && typeof value.command !== 'string') return false
   if (value.args !== undefined && !isStringList(value.args)) return false
   if (value.serverName !== undefined && typeof value.serverName !== 'string') return false
+  if (value.identities !== undefined) {
+    if (typeof value.identities !== 'object' || value.identities === null || Array.isArray(value.identities)) return false
+    if (!Object.entries(value.identities).every(([k, v]) => typeof k === 'string' && typeof v === 'string')) return false
+  }
   if (value.env !== undefined) {
     if (typeof value.env !== 'object' || value.env === null || Array.isArray(value.env)) return false
     if (!Object.values(value.env).every((member) => typeof member === 'string')) return false
@@ -263,13 +267,18 @@ async function resolveClientModule(configured) {
 /**
  * Build the configuration for a workspace's SAGE server.
  *
- * The workspace is the server's working directory, and that is the whole
- * mechanism: `sage-gui mcp` derives its agent identity from the absolute
- * working directory — the basename names the project and the full path picks
- * the key — so each workspace gets its own agent without this plugin computing
- * or pinning anything. Measured: the same path yields the same identity on
- * every run, and the same basename under a different parent yields a different
- * one.
+ * Identity is pinned with `SAGE_IDENTITY_PATH` whenever the deployment names
+ * one, because that is the only rule SAGE applies unconditionally: its
+ * resolution order is `SAGE_IDENTITY_PATH`, then `SAGE_AGENT_KEY`, then a
+ * per-project key derived from the working directory (`cmd/sage-gui/mcp.go`).
+ * `SAGE_PROJECT` is never consulted for identity.
+ *
+ * This matters because the derivation is not reliable inside a GUI host: the
+ * Electron app reuses its own working directory for spawned children, so a
+ * derived identity comes out named after the profile and changes with it. The
+ * `cwd` below is still set, since it is correct for command-line hosts and the
+ * least surprising thing for a per-workspace server, but identity must not
+ * depend on it.
  *
  * @param workspace - Absolute workspace directory.
  * @param sage - SAGE configuration from the plugin config.
@@ -277,13 +286,18 @@ async function resolveClientModule(configured) {
  * @returns A configuration `mcp-client` accepts as-is.
  */
 export function toSageConfig(workspace, sage, toolCallTimeoutMs) {
+  const identity = sage.identities?.[workspace]
   return {
     transport: 'stdio',
     serverName: sage.serverName ?? 'sage',
     command: sage.command ?? '/Applications/SAGE.app/Contents/MacOS/sage-gui',
     args: [...(sage.args ?? ['mcp'])],
-    env: { SAGE_PROVIDER: 'dsh', ...sage.env },
-    // The identity mechanism. Never inherit the harness process directory.
+    env: {
+      SAGE_PROVIDER: 'dsh',
+      ...sage.env,
+      // Applied last so a workspace pin cannot be shadowed by a generic env map.
+      ...(identity === undefined ? {} : { SAGE_IDENTITY_PATH: identity }),
+    },
     cwd: workspace,
     failOnStartupError: false,
     toolCallTimeoutMs,

@@ -37,12 +37,28 @@ Setting `sage: {}` on the plugin row mounts one
 [SAGE](https://github.com/l33tdawg/sage) MCP server per workspace, so each
 workspace signs as its own agent instead of sharing one brain across projects.
 
-The mechanism is the server's working directory. `sage-gui mcp` derives its
-agent identity from the absolute working directory it is started in — the
-basename names the project, the full path selects the key — so this plugin sets
-`cwd` to the workspace root and pins nothing. Measured: the same path yields the
-same identity on every run, and the same directory name under a different parent
-yields a different identity.
+Identity is pinned explicitly with `SAGE_IDENTITY_PATH`, because that is the
+only rule SAGE applies unconditionally (`cmd/sage-gui/mcp.go` resolves
+`SAGE_IDENTITY_PATH`, then `SAGE_AGENT_KEY`, then a per-project key derived from
+the working directory; `SAGE_PROJECT` is never consulted for identity).
+
+The derived path is not reliable inside a GUI host — the Electron app reuses its
+own working directory for spawned children, so a derived identity comes out
+named after the *profile* and changes when the profile does. Pin the identity
+for each workspace:
+
+```yaml
+- id: workspace-mcp
+  config:
+    sage:
+      identities:
+        /absolute/path/to/workspace: /absolute/path/to/agent.key
+```
+
+A workspace with no entry falls back to SAGE's own derivation, which works for
+command-line hosts. Note the plugin still sets `cwd` to the workspace, because
+that is the correct working directory for a per-workspace server even though
+identity must not depend on it.
 
 Consequences worth knowing:
 

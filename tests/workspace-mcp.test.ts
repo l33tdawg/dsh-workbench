@@ -258,6 +258,24 @@ describe('per-workspace SAGE agent', () => {
     assert.equal(sage.toolCallTimeoutMs, 5_000)
   })
 
+  it('pins the identity for a named workspace with SAGE_IDENTITY_PATH', () => {
+    const sage = toSageConfig('/work/levelup', { identities: { '/work/levelup': '/keys/levelup.key' } }, 60_000)
+    assert.equal(sage.env.SAGE_IDENTITY_PATH, '/keys/levelup.key')
+  })
+
+  it('leaves the identity to SAGE when the workspace is not named', () => {
+    const sage = toSageConfig('/work/other', { identities: { '/work/levelup': '/keys/levelup.key' } }, 60_000)
+    assert.equal(sage.env.SAGE_IDENTITY_PATH, undefined)
+  })
+
+  it('does not let a generic env map shadow a workspace identity pin', () => {
+    const sage = toSageConfig('/work/levelup', {
+      identities: { '/work/levelup': '/keys/levelup.key' },
+      env: { SAGE_IDENTITY_PATH: '/keys/wrong.key' },
+    }, 60_000)
+    assert.equal(sage.env.SAGE_IDENTITY_PATH, '/keys/levelup.key')
+  })
+
   it('mounts the SAGE server even when the workspace declares no servers of its own', async () => {
     const root = mkdtempSync(join(tmpdir(), 'workspace-mcp-sage-'))
     const { ctx, mounted } = fakeContext()
@@ -298,6 +316,9 @@ describe('per-workspace SAGE agent', () => {
     assert.ok(Config['~standard'].validate({ sage: 'nope' }).issues)
     assert.ok(Config['~standard'].validate({ sage: { args: 'mcp' } }).issues)
     assert.ok(Config['~standard'].validate({ sage: { env: { A: 1 } } }).issues)
+    assert.ok(Config['~standard'].validate({ sage: { identities: 'nope' } }).issues)
+    assert.ok(Config['~standard'].validate({ sage: { identities: { a: 1 } } }).issues)
+    assert.equal(Config['~standard'].validate({ sage: { identities: { '/w': '/k' } } }).issues, undefined)
     assert.equal(Config['~standard'].validate({ sage: {} }).issues, undefined)
   })
 })
