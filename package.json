@@ -1,0 +1,45 @@
+{
+  "name": "@l33tdawg/dsh-workspace-mcp",
+  "version": "0.1.0",
+  "description": "Register the MCP servers a workspace declares in .mcp.json with DeepSeek Harness, through its own mcp-client.",
+  "keywords": [
+    "dsh-plugin",
+    "mcp",
+    "model-context-protocol",
+    "deepseek-harness"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "main": "lib/index.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.ts",
+      "default": "./lib/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-mcp-client": "*"
+  },
+  "scripts": {
+    "test": "node --test --experimental-strip-types --test-force-exit \"tests/*.test.ts\""
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-mcp-client": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/schemastery": "3.18.4"
+  }
+}

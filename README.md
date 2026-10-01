@@ -1,0 +1,131 @@
+# @l33tdawg/dsh-workspace-mcp
+
+Register the MCP servers a **workspace** declares in `.mcp.json` with DeepSeek
+Harness — through Harness's own `mcp-client`, not a reimplementation.
+
+```jsonc
+// <workspace>/.mcp.json — the same file Claude Code, Codex, and others read
+{
+  "mcpServers": {
+    "sage": { "command": "/Applications/SAGE.app/Contents/MacOS/sage-gui", "args": ["mcp"] },
+    "remote": { "url": "https://example.test/mcp", "headers": { "X-Key": "v" } }
+  }
+}
+```
+
+After a restart, that server's tools appear as `mcp__sage__*` in the session,
+exactly as if the server had been configured in the loader configuration.
+
+## Why this exists
+
+Harness reads MCP server configuration only from its own loader configuration
+(`cordis.patch.yml` and profile patches). Its `mcp-client` package requires one
+plugin instance per server, declared statically. So a project's `.mcp.json` —
+the file that already tells every other agent tool which servers it needs — is
+invisible to Harness, and every server has to be restated in Harness-specific
+configuration. This plugin reads the file and mounts one `mcp-client` per
+server, so the workspace file becomes the single place a project declares its
+servers.
+
+Upstream cannot take this as a patch: `deepseek-harness` states that it does not
+accept external pull requests, and directs changes of this kind to the plugin
+ecosystem. This is that plugin.
+
+## Install
+
+```sh
+# from the profile directory, or with the plugin manager's install action
+pnpm add --dir "$DSH_HOME/profiles/web" /path/to/dsh-workspace-mcp
+```
+
+Then add the bundle to the profile manifest's ordered list:
+
+```json
+{ "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "@l33tdawg/dsh-workspace-mcp"] } } }
+```
+
+Restart Harness. The included `cordis.patch.yml` inserts one `workspace-mcp`
+row; override any of its config fields from the profile patch layer as usual.
+
+## Configuration
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `root` | `''` | Workspace to search. Empty means the Harness process working directory, which is the workspace the session was started in. |
+| `files` | `['.mcp.json', '.dsh/mcp.json']` | Files to read, in order. On a shared server key, **later files win** and the loss is logged. |
+| `allowEnv` | `false` | Whether files may resolve `${env:NAME}` references at all. |
+| `env` | `{}` | Values `${env:NAME}` may resolve to, **only** consulted when `allowEnv` is true. |
+| `envOverrides` | `{}` | Values forced onto every spawned server, overriding what the file declares. |
+| `clientModule` | unset | The `@deepseek-ai/dsh-mcp-client` namespace to mount. See below. |
+| `verbose` | `false` | Log every file read and every server mounted. |
+| `toolCallTimeoutMs` | `60000` | Timeout for one tool call or resource request. |
+
+### Substitutions
+
+`${workspaceFolder}` and `${workspaceRoot}` resolve to `root`; `${cwd}` resolves
+to the entry's own `cwd` once set, otherwise `root`. A whole-value
+`${env:NAME}` resolves to `env[NAME]`.
+
+## Security
+
+**A `.mcp.json` declares commands, and this plugin runs them.** Cloning a
+repository and opening it in Harness therefore executes whatever that
+repository's `.mcp.json` names, as your user. That is inherent to reading
+server definitions from a workspace file — the same property that makes the file
+convenient. Nothing here sandboxes it.
+
+Two specific decisions follow from that, and both are deliberate:
+
+- **`${env:NAME}` is refused unless an operator opts in.** By default a cloned
+  repository cannot read the Harness process environment through its
+  `.mcp.json`. Enable `allowEnv` and name values under `env` only for
+  workspaces you trust; a whole-value reference is required, so a file cannot
+  compose a secret into a longer string such as `--token=${env:TOKEN}`.
+- **Remove `.mcp.json` from version control when a repository should not carry
+  one.** The plugin ships enabled and reads the conventional filenames, so the
+  only reliable opt-out for an untrusted tree is for that tree not to contain
+  the file — or to set `files: []` on the profile's `workspace-mcp` row.
+
+## `clientModule`
+
+The plugin must mount *the same* `mcp-client` the running Harness uses. A second
+installation would keep its own tool registry, register nothing observable, and
+look like an empty workspace. The plugin first tries
+`import('@deepseek-ai/dsh-mcp-client')`, which resolves through the running
+installation's dependency graph. If that fails or the wrong copy is picked up,
+pin it explicitly on the loader row:
+
+```yaml
+- id: workspace-mcp
+  config:
+    clientModule: {!!js ctx.loader.import('@deepseek-ai/dsh-mcp-client')}
+```
+
+## Behavior and failure
+
+- A missing file is silent: most workspaces declare nothing.
+- Invalid JSON, a non-object document, a `mcpServers` member that is not an
+  object, or an entry with neither `command` nor `url` is reported as an error
+  and skipped. The rest of the file still loads.
+- A server key must match `[A-Za-z0-9_-]{1,32}`, because `mcp-client` uses it
+  as the tool namespace (`mcp__<serverName>__<tool>`).
+- An entry with `"disabled": true` is skipped, as other clients do.
+- `"type": "sse"` is refused: the HTTP+SSE transport is retired. Point the entry
+  at a Streamable HTTP endpoint or use stdio.
+- One server failing to connect does not fail the others: each is mounted
+  separately with `failOnStartupError: false`, so a dead server is logged and
+  retried by `mcp-client`'s own reconnect policy rather than blocking startup.
+- Servers live and die with the plugin's fiber, so Harness unloads them
+  normally.
+
+## Development
+
+```sh
+npm install          # dev dependencies only
+npm test             # 34 tests: mapping, substitution, precedence, and a real
+                     # end-to-end mount that spawns a fixture MCP server
+```
+
+`tests/integration.test.ts` bootstraps the real tool registry and the real
+`mcp-client`, writes a `.mcp.json`, and asserts the fixture's tool lands in the
+registry — the tests exercise the actual client rather than a stand-in.

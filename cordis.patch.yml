@@ -1,0 +1,19 @@
+# The workspace-mcp bundle: registers the MCP servers a workspace declares in
+# .mcp.json. Peer dependencies are not installed by the profile, so the client
+# module is resolved from the running installation's dependency graph unless a
+# deployment pins one explicitly with `clientModule`.
+
+- insert:
+    - id: workspace-mcp
+      name: '@l33tdawg/dsh-workspace-mcp'
+      config:
+        # Empty means the harness process working directory, which is the
+        # workspace a session was started in.
+        root: ''
+        files: ['.mcp.json', '.dsh/mcp.json']
+        # A workspace file may not read the harness environment unless an
+        # operator opts in below and names the values under `env`.
+        allowEnv: false
+        envOverrides: {}
+        verbose: false
+        # clientModule: {!!js ctx.loader.import('@deepseek-ai/dsh-mcp-client')}
