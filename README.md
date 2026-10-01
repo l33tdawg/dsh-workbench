@@ -148,6 +148,22 @@ What that established, and how:
 | The workspace file is found and parsed | the same instrumentation recorded `.mcp.json exists=true`, and a deliberately malformed file produced the plugin's own `invalid JSON` diagnostic |
 | A declared server is mounted and its tool registered | booting the real `ToolRuntime` and the real `mcp-client` against a workspace `.mcp.json` registered `mcp__echo__echo` |
 
+To repeat it, in a scratch directory:
+
+```sh
+export DSH_HOME=/tmp/dsh-check
+mkdir -p "$DSH_HOME/profiles/check/node_modules/@l33tdawg"
+cd "$DSH_HOME" && npm install @deepseek-ai/dsh
+# copy the shipped headless template into profiles/check, then:
+printf '%s' '[]' > "$DSH_HOME/profiles/check/cordis.yml"
+ln -s /path/to/dsh-workspace-mcp "$DSH_HOME/profiles/check/node_modules/@l33tdawg/dsh-workspace-mcp"
+# add "@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless" and this package to
+# that profile's package.json dsh.profile.bundles, then, from a workspace that
+# has a .mcp.json:
+"$DSH_HOME/node_modules/.bin/dsh" --profile check --dump-config   # composes the row
+"$DSH_HOME/node_modules/.bin/dsh" --profile check "any task"      # boots it
+```
+
 Two notes for anyone repeating this. `root` defaults to the harness process
 working directory, which for a profile boot is the workspace the session was
 started in — verified rather than assumed, and the reason `files: ['.mcp.json']`
