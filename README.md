@@ -1,4 +1,4 @@
-# @l33tdawg/dsh-workspace-mcp
+# dsh-workspace-mcp
 
 Register the MCP servers a **workspace** declares in `.mcp.json` with DeepSeek
 Harness — through Harness's own `mcp-client`, not a reimplementation.
