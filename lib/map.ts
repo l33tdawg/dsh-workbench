@@ -279,6 +279,11 @@ export function toClientConfigs(entries: readonly RawServerEntry[], context: Map
   return { entries: targets, diagnostics }
 }
 
+/** Add an optional member only when it has a value, so a produced config stays literally comparable. */
+function withTimeout(target: McpClientTarget, toolCallTimeoutMs: number | undefined): McpClientTarget {
+  return toolCallTimeoutMs === undefined ? target : { ...target, toolCallTimeoutMs }
+}
+
 /**
  * Build the configuration object handed to `mcp-client` for one entry.
  *
@@ -286,17 +291,21 @@ export function toClientConfigs(entries: readonly RawServerEntry[], context: Map
  * @param envOverrides - Environment forced on every spawned server.
  * @returns A configuration `mcp-client` accepts as-is.
  */
-export function toClientConfig(entry: RawServerEntry, envOverrides?: Readonly<Record<string, string>>): McpClientTarget {
+export function toClientConfig(
+  entry: RawServerEntry,
+  envOverrides?: Readonly<Record<string, string>>,
+  toolCallTimeoutMs?: number,
+): McpClientTarget {
   if (entry.transport === 'http') {
-    return {
+    return withTimeout({
       transport: 'streamable-http',
       serverName: entry.name,
       url: entry.url!,
       headers: { ...entry.headers },
       failOnStartupError: false,
-    }
+    }, toolCallTimeoutMs)
   }
-  return {
+  return withTimeout({
     transport: 'stdio',
     serverName: entry.name,
     command: entry.command!,
@@ -305,5 +314,5 @@ export function toClientConfig(entry: RawServerEntry, envOverrides?: Readonly<Re
     env: { ...entry.env, ...envOverrides },
     cwd: entry.cwd ?? '',
     failOnStartupError: false,
-  }
+  }, toolCallTimeoutMs)
 }

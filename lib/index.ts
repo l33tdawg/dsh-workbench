@@ -61,9 +61,28 @@ const FIELD_TYPES = {
   env: 'strings-map',
   allowEnv: 'boolean',
   envOverrides: 'strings-map',
+  sage: 'sage-config',
   clientModule: 'any',
   verbose: 'boolean',
   toolCallTimeoutMs: 'number',
+}
+
+/** Whether a value is a list of strings. */
+function isStringList(value) {
+  return Array.isArray(value) && value.every((member) => typeof member === 'string')
+}
+
+/** Whether a value is a usable per-workspace SAGE mount description. */
+function isSageConfig(value) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  if (value.command !== undefined && typeof value.command !== 'string') return false
+  if (value.args !== undefined && !isStringList(value.args)) return false
+  if (value.serverName !== undefined && typeof value.serverName !== 'string') return false
+  if (value.env !== undefined) {
+    if (typeof value.env !== 'object' || value.env === null || Array.isArray(value.env)) return false
+    if (!Object.values(value.env).every((member) => typeof member === 'string')) return false
+  }
+  return true
 }
 
 /** Whether a value matches one declared field type. */
@@ -72,11 +91,12 @@ function matchesFieldType(value, kind) {
   if (kind === 'string') return typeof value === 'string'
   if (kind === 'boolean') return typeof value === 'boolean'
   if (kind === 'number') return Number.isFinite(value)
-  if (kind === 'strings') return Array.isArray(value) && value.every((member) => typeof member === 'string')
+  if (kind === 'strings') return isStringList(value)
   if (kind === 'strings-map') {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
       && Object.values(value).every((member) => typeof member === 'string')
   }
+  if (kind === 'sage-config') return isSageConfig(value)
   return false
 }
 
@@ -108,6 +128,7 @@ export const Config = {
           env: input.env ?? {},
           allowEnv: input.allowEnv ?? false,
           envOverrides: input.envOverrides ?? {},
+          sage: input.sage,
           clientModule: input.clientModule,
           verbose: input.verbose ?? false,
           toolCallTimeoutMs: input.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS,
@@ -202,15 +223,13 @@ function asPlugin(clientModule) {
  *
  * @param ctx - Plugin context; children unload with it.
  * @param clientModule - The `@deepseek-ai/dsh-mcp-client` namespace.
- * @param entries - Accepted entries, after supersession.
- * @param config - Resolved plugin configuration.
+ * @param servers - Complete `mcp-client` configurations to mount, in order.
  * @returns A promise that settles once every mounted client has activated.
  */
-async function mountServers(ctx, clientModule, entries, config) {
+async function mountServers(ctx, clientModule, servers) {
   const plugin = asPlugin(clientModule)
-  for (const entry of entries) {
-    const target = toClientConfig(entry, config.envOverrides)
-    await ctx.plugin(plugin, { ...target, toolCallTimeoutMs: config.toolCallTimeoutMs })
+  for (const server of servers) {
+    await ctx.plugin(plugin, server)
   }
 }
 
@@ -242,7 +261,37 @@ async function resolveClientModule(configured) {
 }
 
 /**
- * Read the workspace's declared MCP servers and register each one.
+ * Build the configuration for a workspace's SAGE server.
+ *
+ * The workspace is the server's working directory, and that is the whole
+ * mechanism: `sage-gui mcp` derives its agent identity from the absolute
+ * working directory — the basename names the project and the full path picks
+ * the key — so each workspace gets its own agent without this plugin computing
+ * or pinning anything. Measured: the same path yields the same identity on
+ * every run, and the same basename under a different parent yields a different
+ * one.
+ *
+ * @param workspace - Absolute workspace directory.
+ * @param sage - SAGE configuration from the plugin config.
+ * @param toolCallTimeoutMs - Timeout for one tool call or resource request.
+ * @returns A configuration `mcp-client` accepts as-is.
+ */
+export function toSageConfig(workspace, sage, toolCallTimeoutMs) {
+  return {
+    transport: 'stdio',
+    serverName: sage.serverName ?? 'sage',
+    command: sage.command ?? '/Applications/SAGE.app/Contents/MacOS/sage-gui',
+    args: [...(sage.args ?? ['mcp'])],
+    env: { SAGE_PROVIDER: 'dsh', ...sage.env },
+    // The identity mechanism. Never inherit the harness process directory.
+    cwd: workspace,
+    failOnStartupError: false,
+    toolCallTimeoutMs,
+  }
+}
+
+/**
+ * Read the workspace's declared MCP servers, then its SAGE server, and register each one.
  * @param ctx - Cordis context carrying the tool registry.
  * @param config - Resolved plugin configuration.
  * @returns A promise that settles once every server is mounted.
@@ -262,12 +311,17 @@ export async function apply(ctx, config) {
     if (diagnostic.level === 'error') ctx.logger.error('[workspace-mcp] %s: %s', where, diagnostic.reason)
     else ctx.logger.warn('[workspace-mcp] %s: %s', where, diagnostic.reason)
   }
-  if (accepted.entries.length === 0) {
-    logger?.(`no MCP servers declared in ${root}`)
+
+  const servers = [...accepted.entries.map((entry) => toClientConfig(entry, config.envOverrides, config.toolCallTimeoutMs))]
+  if (config.sage !== undefined) servers.push(toSageConfig(root, config.sage, config.toolCallTimeoutMs))
+  if (servers.length === 0) {
+    logger?.(`no MCP servers declared in ${root}, and no SAGE workspace agent configured`)
     return
   }
-  await mountServers(ctx, await resolveClientModule(config.clientModule), accepted.entries, config)
-  logger?.(`mounted ${accepted.entries.length} server(s) from ${root}`)
+
+  const clientModule = await resolveClientModule(config.clientModule)
+  await mountServers(ctx, clientModule, servers)
+  logger?.(`mounted ${servers.length} server(s) for ${root}`)
 }
 
 export { mapConfigDocument, toClientConfig, toClientConfigs }

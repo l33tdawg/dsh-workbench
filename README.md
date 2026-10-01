@@ -31,6 +31,36 @@ Upstream cannot take this as a patch: `deepseek-harness` states that it does not
 accept external pull requests, and directs changes of this kind to the plugin
 ecosystem. This is that plugin.
 
+## A SAGE agent per workspace
+
+Setting `sage: {}` on the plugin row mounts one
+[SAGE](https://github.com/l33tdawg/sage) MCP server per workspace, so each
+workspace signs as its own agent instead of sharing one brain across projects.
+
+The mechanism is the server's working directory. `sage-gui mcp` derives its
+agent identity from the absolute working directory it is started in — the
+basename names the project, the full path selects the key — so this plugin sets
+`cwd` to the workspace root and pins nothing. Measured: the same path yields the
+same identity on every run, and the same directory name under a different parent
+yields a different identity.
+
+Consequences worth knowing:
+
+- **A new workspace registers a new agent** the first time it is opened, and an
+  operator must approve it once before it can read or write memories. That is
+  the cost of per-workspace separation.
+- If your deployment already has a SAGE server declared in the harness loader
+  configuration, remove it: two servers claiming `serverName: sage` in one scope
+  make `mcp-client` throw and abort the boot.
+- Set `sage.serverName`, `sage.command`, `sage.args`, or `sage.env` to change the
+  namespace, binary, arguments, or environment.
+
+```yaml
+- id: workspace-mcp
+  config:
+    sage: {}
+```
+
 ## Install
 
 ```sh

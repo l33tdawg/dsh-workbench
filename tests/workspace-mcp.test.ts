@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { apply, Config, inject, mapConfigDocument, name, toClientConfig } from '../lib/index.ts'
+import { apply, Config, inject, mapConfigDocument, name, toClientConfig, toSageConfig } from '../lib/index.ts'
 import { toClientConfigs } from '../lib/map.ts'
 
 const WORKSPACE = '/work/levelup'
@@ -234,6 +234,62 @@ describe('forced environment', () => {
   })
 })
 
+describe('per-workspace SAGE agent', () => {
+  it('makes the workspace the server working directory, which is what selects the identity', () => {
+    const sage = toSageConfig('/work/levelup', {}, 60_000)
+    assert.equal(sage.cwd, '/work/levelup')
+    assert.equal(sage.serverName, 'sage')
+    assert.equal(sage.command, '/Applications/SAGE.app/Contents/MacOS/sage-gui')
+    assert.deepEqual(sage.args, ['mcp'])
+    assert.equal(sage.env.SAGE_PROVIDER, 'dsh')
+    assert.equal(sage.failOnStartupError, false)
+  })
+
+  it('never leaves cwd empty, so the agent cannot inherit the harness directory', () => {
+    assert.notEqual(toSageConfig('/work/anything', {}, 60_000).cwd, '')
+  })
+
+  it('lets an operator override the command, namespace, and environment', () => {
+    const sage = toSageConfig('/work/x', { command: '/opt/sage', args: ['mcp', '--quiet'], serverName: 'memory', env: { SAGE_API_URL: 'http://127.0.0.1:9999' } }, 5_000)
+    assert.equal(sage.command, '/opt/sage')
+    assert.deepEqual(sage.args, ['mcp', '--quiet'])
+    assert.equal(sage.serverName, 'memory')
+    assert.equal(sage.env.SAGE_API_URL, 'http://127.0.0.1:9999')
+    assert.equal(sage.toolCallTimeoutMs, 5_000)
+  })
+
+  it('mounts the SAGE server even when the workspace declares no servers of its own', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'workspace-mcp-sage-'))
+    const { ctx, mounted } = fakeContext()
+    await apply(ctx, config({ root, sage: {}, clientModule: clientModule() }))
+    assert.equal(mounted.length, 1)
+    assert.equal(mounted[0].config.serverName, 'sage')
+    assert.equal(mounted[0].config.cwd, root)
+  })
+
+  it('mounts declared servers and the SAGE server together', async () => {
+    const root = workspaceWith({ '.mcp.json': { mcpServers: { other: { command: '/bin/other' } } } })
+    const { ctx, mounted } = fakeContext()
+    await apply(ctx, config({ root, sage: {}, clientModule: clientModule() }))
+    assert.deepEqual(mounted.map((m) => m.config.serverName), ['other', 'sage'])
+    assert.equal(mounted[1].config.cwd, root)
+  })
+
+  it('mounts nothing when no servers are declared and no SAGE agent is configured', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'workspace-mcp-none-'))
+    const { ctx, mounted } = fakeContext()
+    await apply(ctx, config({ root, clientModule: clientModule() }))
+    assert.equal(mounted.length, 0)
+  })
+
+  it('rejects a malformed sage config at load', () => {
+    assert.ok(Config['~standard'].validate({ sage: 'nope' }).issues)
+    assert.ok(Config['~standard'].validate({ sage: { args: 'mcp' } }).issues)
+    assert.ok(Config['~standard'].validate({ sage: { env: { A: 1 } } }).issues)
+    assert.equal(Config['~standard'].validate({ sage: {} }).issues, undefined)
+  })
+})
+
 describe('activation', () => {
   it('mounts one client per declared server', async () => {
     const root = workspaceWith({ '.mcp.json': { mcpServers: { sage: { command: '/bin/sage-gui', args: ['mcp'] } } } })
@@ -243,6 +299,7 @@ describe('activation', () => {
     assert.equal(mounted[0].config.serverName, 'sage')
     assert.equal(mounted[0].config.transport, 'stdio')
     assert.equal(mounted[0].config.toolCallTimeoutMs, 60_000)
+    assert.equal(mounted[0].config.cwd, '')
     // The namespace is normalized into a plugin FUNCTION carrying `inject`:
     // an object plugin's inject is ignored, which silently breaks ctx.tools.
     assert.equal(typeof mounted[0].module, 'function')

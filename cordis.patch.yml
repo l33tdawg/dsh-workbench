@@ -1,7 +1,8 @@
 # The workspace-mcp bundle: registers the MCP servers a workspace declares in
-# .mcp.json. Peer dependencies are not installed by the profile, so the client
-# module is resolved from the running installation's dependency graph unless a
-# deployment pins one explicitly with `clientModule`.
+# .mcp.json, plus one SAGE server per workspace so each workspace has its own
+# agent identity. Peer dependencies are not installed by the profile, so the
+# client module is resolved from the running installation's dependency graph
+# unless a deployment pins one explicitly with `clientModule`.
 
 - insert:
     - id: workspace-mcp
@@ -15,5 +16,12 @@
         # operator opts in below and names the values under `env`.
         allowEnv: false
         envOverrides: {}
+        # One SAGE server per workspace. The workspace is the server's working
+        # directory, and `sage-gui mcp` derives its agent identity from that
+        # path, so this workspace signs as its own agent with nothing pinned.
+        # A new workspace therefore registers a NEW agent that an operator must
+        # approve once. Remove this row and declare SAGE per profile instead if
+        # one shared identity is wanted.
+        sage: {}
         verbose: false
         # clientModule: {!!js ctx.loader.import('@deepseek-ai/dsh-mcp-client')}
