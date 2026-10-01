@@ -313,7 +313,16 @@ export async function apply(ctx, config) {
   }
 
   const servers = [...accepted.entries.map((entry) => toClientConfig(entry, config.envOverrides, config.toolCallTimeoutMs))]
-  if (config.sage !== undefined) servers.push(toSageConfig(root, config.sage, config.toolCallTimeoutMs))
+  const sageName = config.sage?.serverName ?? 'sage'
+  // A workspace that declares its own SAGE server wins. Mounting the configured
+  // one as well would claim the same serverName twice, which `mcp-client`
+  // refuses by aborting the boot. The workspace file is also where SAGE itself
+  // reads a pinned identity from, so it is the more specific declaration.
+  if (config.sage !== undefined && !servers.some((server) => server.serverName === sageName)) {
+    servers.push(toSageConfig(root, config.sage, config.toolCallTimeoutMs))
+  } else if (config.sage !== undefined) {
+    logger?.(`SAGE server declared by the workspace as "${sageName}"; using it instead of the configured default`)
+  }
   if (servers.length === 0) {
     logger?.(`no MCP servers declared in ${root}, and no SAGE workspace agent configured`)
     return

@@ -275,6 +275,18 @@ describe('per-workspace SAGE agent', () => {
     assert.equal(mounted[1].config.cwd, root)
   })
 
+  it('lets a workspace-declared SAGE server win over the configured default', async () => {
+    const root = workspaceWith({
+      '.mcp.json': { mcpServers: { sage: { command: '/bin/custom-sage', args: ['mcp'] } } },
+    })
+    const { ctx, mounted, logged } = fakeContext()
+    await apply(ctx, config({ root, sage: {}, verbose: true, clientModule: clientModule() }))
+    // Exactly one SAGE server: two would claim the same serverName and abort the boot.
+    assert.equal(mounted.filter((m) => m.config.serverName === 'sage').length, 1)
+    assert.equal(mounted.find((m) => m.config.serverName === 'sage').config.command, '/bin/custom-sage')
+    assert.ok(logged.some((line) => line.includes('declared by the workspace')))
+  })
+
   it('mounts nothing when no servers are declared and no SAGE agent is configured', async () => {
     const root = mkdtempSync(join(tmpdir(), 'workspace-mcp-none-'))
     const { ctx, mounted } = fakeContext()
