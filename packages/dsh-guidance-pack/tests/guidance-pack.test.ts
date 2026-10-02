@@ -180,11 +180,17 @@ describe('registration', () => {
 })
 
 describe('prompt budget', () => {
+  // Raised from 8000 once there was something to compare against. Codex ships
+  // about 6,900 tokens of behavioural guidance, and this pack is a third of
+  // that; the DSH request it lands in carried 15,074 tokens of tool schemas in
+  // the session measured, so the pack is not what makes a request large. The
+  // limit is kept as a ratchet rather than a target: additions have to displace
+  // something or justify a new number.
   it('stays within the budget the measurements allow', () => {
     const text = renderGuidance(config())
     const approxTokens = Math.ceil(text.length / 4)
-    assert.ok(text.length < 8000, `guidance is ${text.length} chars; budget is 8000`)
-    assert.ok(approxTokens < 2000, `guidance is ~${approxTokens} tokens; budget is 2000`)
+    assert.ok(text.length < 9000, `guidance is ${text.length} chars; budget is 9000`)
+    assert.ok(approxTokens < 2250, `guidance is ~${approxTokens} tokens; budget is 2250`)
   })
 })
 
