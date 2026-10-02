@@ -1,0 +1,42 @@
+{
+  "name": "@l33tdawg/dsh-compaction-todo",
+  "version": "0.1.0",
+  "description": "Put the todo list back into the model's context after a compaction, replayed from the durable session log rather than from plugin memory.",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "compaction",
+    "todo"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "main": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test --experimental-strip-types --test-force-exit \"tests/*.test.ts\""
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

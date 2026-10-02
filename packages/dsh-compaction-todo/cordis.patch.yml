@@ -1,0 +1,8 @@
+# The compaction-todo bundle: put the todo list back into the model's context
+# after a compaction, replayed from the durable session log. Inserted as its own
+# row so a profile can tune or disable it without touching any harness row.
+
+- insert:
+    - id: compaction-todo
+      name: '@l33tdawg/dsh-compaction-todo'
+      config: {}
