@@ -54,6 +54,14 @@ Two of these exist to separate cases that were previously identical. `unparsed` 
 
 The record is not the report. The report goes to the agent and exists only when there is something to report; the record goes to the session log and exists every time the plugin decided to check. It is bounded by the same gate as the check, so a read-only tool call writes nothing at all. Writing one is best-effort — a session that refuses the append must not fail the agent's tool call, and there is a test for exactly that.
 
+Observed live on 2026-10-02 in `session-ee71145b`: the first successful edit after this code was committed produced
+
+```json
+{ "outcome": "clean", "label": "typecheck", "reported": 0 }
+```
+
+at seq 978, written between the `tool/call` that caused it and that call's `tool/result`. That is the whole change in one line: the session previously showed nothing at all at this point, and now it records that the check ran and passed.
+
 ## Configuration
 
 | Field | Type | Default | Meaning |
@@ -125,4 +133,4 @@ That file is named `.e2e.ts` rather than `.test.ts`, and until now the test glob
 - **Detection uses local filesystem access**, not `ctx.fs`. That is fine for local sessions and wrong for a remote-backend session, where detection returns nothing and the plugin stays quiet instead of reporting against the wrong tree.
 - **The check is per session, not per file.** Editing `a.ts` runs a project-wide typecheck. Incremental checking would be cheaper and is not attempted.
 - **No baseline diff.** Attribution is by edited path, so a file the agent edited that was already broken will report its pre-existing errors. Recording a baseline before the first edit would fix that and is not done.
-- **The outcome record has not been seen in a live session yet.** The plugin itself has fired in real turns — twice across the 56-session corpus, both syntax errors caught by a typecheck — but `verify-on-edit/check` was added after the running DSH process had loaded the plugin, and the Cordis loader does not watch files. So the wiring is covered by tests while the append surviving a real write is not yet observed. A restart closes that.
+- **The record only exists when the gate opens.** A run debounced away, or a call to a tool that does not modify files, writes nothing. That is deliberate — the hook fires on every tool call and recording each one would fill the log — but it means a session with no records is still ambiguous between "nothing was edited" and "the plugin is not mounted". Only the presence of records proves engagement.
