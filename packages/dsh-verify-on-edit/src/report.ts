@@ -258,6 +258,75 @@ export function relevantDiagnostics(
 }
 
 /**
+ * What one check attempt did.
+ *
+ * Silence used to be the only record, and it was ambiguous. The plugin says
+ * nothing when the check passes, when no check was detected, and when the check
+ * could not run at all, so a session log could not distinguish "the edit was
+ * clean" from "this plugin never engaged here" — and a count of reports could
+ * not be turned into a rate. Naming each case is what makes the silence
+ * readable after the fact.
+ */
+export type CheckOutcome =
+  /** The check ran and passed. */
+  | 'clean'
+  /** The check ran and failed, but named no file this session edited. */
+  | 'unrelated'
+  /** The check ran, failed, and named at least one edited file. */
+  | 'failed'
+  /** The check ran and failed, and printed nothing that parsed as a diagnostic. */
+  | 'unparsed'
+  /** No check could be detected for this project. */
+  | 'no-check'
+  /** The check could not be started, or started and did not exit normally. */
+  | 'unrunnable'
+
+/** One bounded record of a check attempt, written to the session log. */
+export interface CheckRecord {
+  /** What happened. */
+  readonly outcome: CheckOutcome
+  /** The check's own label, absent when none was detected. */
+  readonly label?: string
+  /** How many diagnostics named a file this session edited. */
+  readonly reported?: number
+}
+
+/** How a completed check process exited, and what it printed. */
+export interface CheckRun {
+  /** The exit code, or `null` when the process did not exit normally. */
+  readonly exitCode: number | null
+  /** Everything the run printed that parsed as a diagnostic. */
+  readonly diagnostics: readonly Diagnostic[]
+}
+
+/**
+ * Classify one check attempt.
+ *
+ * Pure, so every branch is testable without a shell. The order matters twice
+ * over: a check that exited zero is clean whatever it printed, and a check that
+ * failed while printing nothing parsable is `unparsed` rather than `clean`,
+ * because reporting a broken check as a passing one is the worst answer this
+ * function could give.
+ *
+ * @param plan - the detected check, or `undefined` when none was found.
+ * @param ran - the completed run, or `undefined` when it could not be run.
+ * @param reported - diagnostics attributed to a file this session edited.
+ * @returns the record to append to the session log.
+ */
+export function classifyCheck(
+  plan: CheckPlan | undefined,
+  ran: CheckRun | undefined,
+  reported: number,
+): CheckRecord {
+  if (plan === undefined) return { outcome: 'no-check' }
+  if (ran === undefined || ran.exitCode === null) return { outcome: 'unrunnable', label: plan.label }
+  if (ran.exitCode === 0) return { outcome: 'clean', label: plan.label, reported: 0 }
+  if (ran.diagnostics.length === 0) return { outcome: 'unparsed', label: plan.label, reported: 0 }
+  if (reported === 0) return { outcome: 'unrelated', label: plan.label, reported: 0 }
+  return { outcome: 'failed', label: plan.label, reported }
+}
+
+/**
  * Render the context message the agent reads after a broken check.
  *
  * The closing instruction is not decoration. An agent handed a list of compiler

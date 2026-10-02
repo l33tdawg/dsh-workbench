@@ -31,6 +31,29 @@ The edit still counts as a success. The check rides along as context for the nex
 
 **Bounded.** One check per debounce window, a hard timeout, output capped per file, and anything thrown inside the plugin is swallowed and logged. A verification plugin must never be the reason a tool call fails, and there is a test that asserts exactly that.
 
+## What it leaves in the log
+
+Silence used to be this plugin's only record, and silence is ambiguous. It says nothing when the check passes, when no check was detected, and when the check could not run at all — so reading a session afterwards, "no problem was reported" could not be told apart from "this plugin never engaged here". A count of reports could not be turned into a rate, because there was no denominator.
+
+Every check attempt now appends one bounded `verify-on-edit/check` session event:
+
+```json
+{ "outcome": "clean", "label": "typecheck", "reported": 0 }
+```
+
+| `outcome` | Meaning |
+|---|---|
+| `clean` | The check ran and passed. |
+| `failed` | The check ran, failed, and named at least one edited file. |
+| `unrelated` | The check ran and failed, but named only files this session did not edit. |
+| `unparsed` | The check ran and failed, and printed nothing that parsed as a diagnostic. |
+| `no-check` | No check could be detected for this project. |
+| `unrunnable` | The check could not be started, or started and did not exit normally. |
+
+Two of these exist to separate cases that were previously identical. `unparsed` matters because a check that fails and prints something this parser cannot read is not a passing check, and reporting it as one would recreate the ambiguity the record removes. `no-check` is what makes an inert plugin visible: a session whose only records are `no-check` is one where detection found nothing, which is a different problem from a session where every check passed.
+
+The record is not the report. The report goes to the agent and exists only when there is something to report; the record goes to the session log and exists every time the plugin decided to check. It is bounded by the same gate as the check, so a read-only tool call writes nothing at all. Writing one is best-effort — a session that refuses the append must not fail the agent's tool call, and there is a test for exactly that.
+
 ## Configuration
 
 | Field | Type | Default | Meaning |
@@ -93,11 +116,13 @@ The check runs through `ctx.shell`, so it inherits the session's sandbox and its
 npm test
 ```
 
-82 tests. The parser cases come from the real checkers' output, not from imagination. The gate tests cover the debounce and the attribution filter, including the case that matters most: an error in a file the agent never touched must produce no message. `tests/hook.e2e.ts` drives the real plugin against the actual DSH packages with a fake shell, so the event name, the decision shape, and the never-break-a-tool-call guarantee are all covered.
+105 tests. The parser cases come from the real checkers' output, not from imagination. The gate tests cover the debounce and the attribution filter, including the case that matters most: an error in a file the agent never touched must produce no message. `tests/hook.e2e.ts` drives the real plugin against the actual DSH packages with a fake shell, so the event name, the decision shape, the six outcomes, and the never-break-a-tool-call guarantee are all covered.
+
+That file is named `.e2e.ts` rather than `.test.ts`, and until now the test glob only matched `tests/*.test.ts`, so none of it had ever run under `npm test` — it passed when run directly, which is how the gap stayed invisible. The script now matches both patterns.
 
 ## Known limitations
 
 - **Detection uses local filesystem access**, not `ctx.fs`. That is fine for local sessions and wrong for a remote-backend session, where detection returns nothing and the plugin stays quiet instead of reporting against the wrong tree.
 - **The check is per session, not per file.** Editing `a.ts` runs a project-wide typecheck. Incremental checking would be cheaper and is not attempted.
 - **No baseline diff.** Attribution is by edited path, so a file the agent edited that was already broken will report its pre-existing errors. Recording a baseline before the first edit would fix that and is not done.
-- **The interactive plugin's integration is exercised by tests, not by a running session.** Nobody has watched this fire in a real DSH turn yet.
+- **The outcome record has not been seen in a live session yet.** The plugin itself has fired in real turns — twice across the 56-session corpus, both syntax errors caught by a typecheck — but `verify-on-edit/check` was added after the running DSH process had loaded the plugin, and the Cordis loader does not watch files. So the wiring is covered by tests while the append surviving a real write is not yet observed. A restart closes that.

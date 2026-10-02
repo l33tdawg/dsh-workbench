@@ -74,9 +74,20 @@ function install(output: string, exitCode = 1, config: Config = {}): Harness {
  * The plugin keys per-session state on the agent object, exactly as the
  * repeat-tool-reminder guard does. A fresh object per call would reset the
  * debounce and attribute nothing, so the tests hold one.
+ *
+ * The fake session also captures `append`, because in a real boot the session is
+ * the durable log and the outcome record is the only thing this plugin leaves
+ * behind.
  */
 function agentFor(root: string) {
-  return { session: { header: { cwd: root } } }
+  const events: { type: string, data: unknown }[] = []
+  return {
+    session: {
+      header: { cwd: root },
+      append: (type: string, data: unknown) => { events.push({ type, data }) },
+      events,
+    },
+  }
 }
 
 /** A fake exec for a successful edit. */
@@ -302,5 +313,105 @@ describe('re-detection', () => {
     await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
     // Both runs execute, but detection happened once and was cached.
     assert.equal(harness.plans.length, 2)
+  })
+})
+
+// Every case below used to be invisible. Silence was the plugin's only record,
+// so a clean session and a session where the plugin never engaged looked the
+// same in the log, and a count of reports could not become a rate.
+describe('the outcome record', () => {
+  /** The events one agent's session captured. */
+  const eventsOf = (agent: ReturnType<typeof agentFor>) => agent.session.events
+
+  it('records a clean run, which used to leave nothing at all', async () => {
+    const root = project()
+    dirs.push(root)
+    const harness = install('', 0)
+    const agent = agentFor(root)
+    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
+    assert.deepEqual(eventsOf(agent), [
+      { type: 'verify-on-edit/check', data: { outcome: 'clean', label: 'typecheck', reported: 0 } },
+    ])
+  })
+
+  it('records a project that declares no check, so inertness is visible', async () => {
+    const bare = mkdtempSync(join(tmpdir(), 'voe-bare-'))
+    dirs.push(bare)
+    writeFileSync(join(bare, 'README.md'), '# hi')
+    const harness = install('src/app.ts(1,1): error TS1: x')
+    const agent = agentFor(bare)
+    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
+    assert.deepEqual(eventsOf(agent), [
+      { type: 'verify-on-edit/check', data: { outcome: 'no-check' } },
+    ])
+  })
+
+  it('records a reported failure with the count it attributed', async () => {
+    const root = project()
+    dirs.push(root)
+    const harness = install('src/app.ts(1,1): error TS1: x')
+    const agent = agentFor(root)
+    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
+    assert.deepEqual(eventsOf(agent), [
+      { type: 'verify-on-edit/check', data: { outcome: 'failed', label: 'typecheck', reported: 1 } },
+    ])
+  })
+
+  // The plugin stays silent here, which is correct for the agent and useless for
+  // anyone reading the log afterwards. The record is what separates "your edit
+  // was clean" from "this project was already red".
+  it('records pre-existing breakage as unrelated rather than as silence', async () => {
+    const root = project()
+    dirs.push(root)
+    const harness = install('src/unrelated.ts(1,1): error TS1: pre-existing')
+    const agent = agentFor(root)
+    const decision = await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
+    assert.equal(decision.additionalContexts, undefined)
+    assert.deepEqual(eventsOf(agent), [
+      { type: 'verify-on-edit/check', data: { outcome: 'unrelated', label: 'typecheck', reported: 0 } },
+    ])
+  })
+
+  it('records a check that could not run', async () => {
+    const root = project()
+    dirs.push(root)
+    const harness: Harness = { hook: undefined as never, plans: [], warnings: [] }
+    const ctx = {
+      on: (_event: string, handler: Harness['hook']) => { harness.hook = handler; return () => {} },
+      logger: { warn: (format: string) => { harness.warnings.push(format) } },
+      shell: {
+        resolve: () => { throw new Error('shell exploded') },
+        execute: async () => { throw new Error('unreachable') },
+      },
+    }
+    apply(ctx as never, {})
+    const agent = agentFor(root)
+    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
+    assert.deepEqual(eventsOf(agent), [
+      { type: 'verify-on-edit/check', data: { outcome: 'unrunnable', label: 'typecheck' } },
+    ])
+  })
+
+  // Bounded, and this is what keeps it bounded: the hook fires on every tool
+  // call, and only a call that actually reaches the check may write.
+  it('writes nothing for a call the gate rejected', async () => {
+    const root = project()
+    dirs.push(root)
+    const harness = install('src/app.ts(1,1): error TS1: x')
+    const agent = agentFor(root)
+    await harness.hook(execFor(agent, 'src/app.ts', 'read'), { isError: false }, async () => ({ kind: 'accept' }))
+    assert.deepEqual(eventsOf(agent), [], 'a read-only call must not append an event')
+  })
+
+  // A session that cannot be written to is not a reason for the agent's edit to
+  // fail. This is the same guarantee the shell failure above gets.
+  it('never breaks a tool call when the session refuses the append', async () => {
+    const root = project()
+    dirs.push(root)
+    const harness = install('src/app.ts(1,1): error TS1: x')
+    const agent = { session: { header: { cwd: root }, append: () => { throw new Error('read-only session') } } }
+    const decision = await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
+    assert.equal(decision.kind, 'accept')
+    assert.match(contextText(decision), /typecheck fails/)
   })
 })
