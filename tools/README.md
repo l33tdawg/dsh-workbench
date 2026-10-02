@@ -140,6 +140,31 @@ Run it before installing the pack. Run it again after a comparable stretch of wo
 pooled rate, the `read-after-edit` share, **and the distribution**: if one session holds most of the
 events, the comparison is between that session and everything else, not between two harnesses.
 
+## Reading a log back with check_claims
+
+Verifying a claim about the corpus means decompressing a session and counting inside it, which is
+what `check_claims` is for. It has a bound worth knowing before you trust an empty result.
+
+**`check_claims` examines no file of 2,000,000 bytes or more.** Pinned by bisect on 2026-10-02:
+1,999,999 bytes was examined and 2,000,001 was not. A decompressed `session.v4.jsonl.zstd` passes
+that in an ordinary working session — the one behind this section was 4.7 MB.
+
+It fails safe, which is the part to lean on: above the bound it reports *"examined no files at this
+path, so there is nothing to count"* as **undecided**, never as zero. An `[UNKNOWN]` verdict means
+the bound, not an absence. Slice first:
+
+```sh
+tail -n 300 session.jsonl > tail.jsonl    # 1.5 MB, scanned normally
+```
+
+Two more traps live in the same tool, both hit while writing this. `^` anchors to the start of the
+*file* rather than each line unless you pass `flags: "m"`, so a line-anchored pattern silently
+matches at most one record. And a bare search for a marker is not a count: grepping a live log for
+`verify-on-edit/check` returned 37 hits, nearly all of them the conversation *discussing* the event
+rather than records of it. Anchor the record itself — `^\{"type":"verify-on-edit/check"` with
+`flags: "m"` — and keep a second pattern in the same call that must match many lines, so a zero
+cannot be mistaken for a working search.
+
 ## Why these four and not something else
 
 Each is read from the durable log, so it needs no instrumentation and cannot be gamed by the agent
