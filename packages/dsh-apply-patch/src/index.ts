@@ -289,17 +289,27 @@ export function apply(ctx: {
         const entry = targets.get(change.path)
         if (entry === undefined) throw new PatchApplyError(`internal: ${change.path} was not resolved`, change.path)
         const intent = await ctx.waterfall('fs/write-intent', entry.target, exec, () => undefined)
+        // Declared outside the try: the observation after it needs the version
+        // this write produced, and a `const` inside the block would not survive
+        // the catch.
+        let outcome: { version?: unknown } | undefined
         try {
           // The policy is stamped on the mutation, as `write` and `edit` do.
           // Omitting it lets the provider apply its own default root instead of
           // the session's, which puts the write in the wrong place.
-          await ctx.fs.writeText(
+          //
+          // The outcome is kept because the observation below needs the version
+          // this write produced. `FsObservation` requires one on `present`, and
+          // the next write computes `replaceIfVersion` from it: emit without it
+          // and the following edit of the same file fails the compare-and-swap
+          // with a misleading "file changed since it was read".
+          outcome = await ctx.fs.writeText(
             entry.target,
             change.after,
             intent,
             (exec as { signal?: AbortSignal }).signal,
             policy,
-          )
+          ) as { version?: unknown }
         } catch (error: unknown) {
           const remedied = remediate(error, change.target)
           // A denial is far easier to act on when it names the root the fence
@@ -312,7 +322,7 @@ export function apply(ctx: {
             ? new Error(message)
             : new Error(`${message}\n\nAlready written by this patch: ${written.join(', ')}`)
         }
-        ctx.emit('fs/observed', entry.target, { kind: 'present' }, exec)
+        ctx.emit('fs/observed', entry.target, { kind: 'present', version: outcome.version }, exec)
         written.push(change.target)
       }
 

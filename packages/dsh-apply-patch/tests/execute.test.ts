@@ -15,7 +15,10 @@ import { apply, resolveSessionPolicy, resolveOptions } from '../src/index.ts'
 
 /** Capture what the tool passes to the filesystem service. */
 function harness({ policy, contents = {} }: { policy?: unknown, contents?: Record<string, string> } = {}) {
-  const calls: { write?: { target: unknown, content: string, intent: unknown, signal: unknown, policy: unknown } } = {}
+  const calls: {
+    write?: { target: unknown, content: string, intent: unknown, signal: unknown, policy: unknown }
+    observed: { target: unknown, observation: unknown }[]
+  } = { observed: [] }
   let registered: { execute: (args: unknown, exec: unknown) => Promise<unknown>, name: string } | undefined
 
   const ctx = {
@@ -37,11 +40,13 @@ function harness({ policy, contents = {} }: { policy?: unknown, contents?: Recor
       },
       writeText: async (target: unknown, content: string, intent: unknown, signal: unknown, sandboxPolicy: unknown) => {
         calls.write = { target, content, intent, signal, policy: sandboxPolicy }
-        return {}
+        return { operation: 'update', version: 'v-after-write' }
       },
     },
     waterfall: async () => undefined,
-    emit: () => {},
+    emit: (event: string, target: unknown, observation: unknown) => {
+      if (event === 'fs/observed') calls.observed.push({ target, observation })
+    },
   }
 
   apply(ctx as never)
@@ -135,5 +140,26 @@ describe('execute', () => {
       /already exists/,
     )
     assert.equal(calls.write, undefined)
+  })
+})
+
+describe('the post-write observation', () => {
+  // `FsObservation` requires a version on `present`, and the next write computes
+  // `replaceIfVersion` from it. Emitting without one made a second edit of the
+  // same file fail the compare-and-swap with "file changed since it was read",
+  // which reads as a concurrent modification rather than as this bug.
+  it('carries the version the write produced', async () => {
+    const { calls, tool } = harness({ contents: { 'a.txt': 'alpha\n' } })
+    await tool.execute({ patch: '*** Begin Patch\n*** Update File: a.txt\n@@\n-alpha\n+beta\n*** End Patch' }, exec('/repo'))
+    assert.equal(calls.observed.length, 1, 'one observation per written file')
+    assert.deepEqual(calls.observed[0].observation, { kind: 'present', version: 'v-after-write' })
+  })
+
+  it('emits at most one observation per patch, not one per hunk', async () => {
+    const { calls, tool } = harness({ contents: { 'a.txt': 'alpha\nbeta\n' } })
+    await tool.execute({
+      patch: '*** Begin Patch\n*** Update File: a.txt\n@@\n-alpha\n+ALPHA\n@@\n-beta\n+BETA\n*** End Patch',
+    }, exec('/repo'))
+    assert.equal(calls.observed.length, 1)
   })
 })
