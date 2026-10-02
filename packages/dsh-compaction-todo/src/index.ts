@@ -110,9 +110,12 @@ export function apply(ctx: Context): void {
       const reason = decision as { messages?: unknown[] } | undefined
       const messages = Array.isArray(reason?.messages) ? [...reason.messages, message] : [message]
       // Say so on the way out. A reminder that fired and one that never fired
-      // look identical from the outside otherwise, and the Desktop app shows no
-      // host logger output, so this line is the only trace a live session
-      // leaves. It records the decision, not delivery.
+      // look identical from the outside otherwise. This line records the
+      // decision, not delivery: it says the listener saw a compaction newer than
+      // the newest write. Delivery shows up as a `user/message` carrying
+      // SOURCE_KIND in the session log, which is the stronger trace — host
+      // logger output is not captured anywhere a completed session can be read
+      // back from.
       ctx.logger?.info?.(
         'compaction-todo: re-injected %d todo(s) after compaction at seq %d (newest write at seq %d)',
         todos.length,

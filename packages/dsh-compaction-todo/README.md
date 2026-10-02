@@ -24,9 +24,12 @@ Two listeners, no new tool:
 
 The log is the authority, not plugin memory. The mirror is only a cache, so a
 write this process missed cannot make the injection wrong: the next step re-reads
-the log. The reminder repeats on each step until the agent writes again, because
-whether a message contributed at `agent/pre-step` is durable or single-step is not
-documented, and a reminder that survives one step is close to useless.
+the log. The reminder repeats on each step until the agent writes again. That
+repeat began as a hedge: whether a message contributed at `agent/pre-step` is
+durable or single-step was not documented, and a reminder that survives one step
+is close to useless. The first live run settled it in favour of durability (see
+[Verification](#verification)). The repeat is kept anyway, because it costs one
+bounded block per step and leaves the plugin not depending on that finding.
 
 Four properties keep it honest:
 
@@ -66,23 +69,50 @@ does, when a reminder is owed, and how the list renders. Two of them exist
 because the first draft failed them: a todo carrying `</system-reminder>` could
 close the frame, and ordinary text containing `<` was being left unescaped.
 
-Not verified here, and the distinction matters:
+The tests cover the log-reading half only. The listener imports the harness's
+message constructor, which resolves only inside an installation, so delivery is
+not reachable from a unit test.
 
-- **The reminder has never been delivered by a running DSH.** The listener
-  imports the harness's message constructor, which resolves only inside an
-  installation, so the delivery half is not covered by these tests. What has
-  been confirmed live is the mount: `include:compaction-todo` is
-  `enabled: true`, `fiberPhase: active`, with the package symlinked from this
-  directory.
-- **The first live run needs a compaction.** The profile now has
-  `include:compaction-basic` and `include:command-compact` enabled and the
-  `compaction` Host Service resolving, so `/compact` in a session is the
-  trigger. The check is: hold a todo list, compact, and confirm the reminder
-  arrives carrying the same items. If it does not, the next check is whether
-  `agent/pre-step` messages contributed by a plugin reach the model at all —
-  the one assumption this plugin was written to avoid depending on.
-- **A firing leaves a log line, not a visible marker.** When the reminder is
-  injected the plugin logs `compaction-todo: re-injected N todo(s) after
-  compaction at seq X`. That records the decision, not delivery: it proves the
-  listener saw a compaction past the newest write, not that the model read the
-  text.
+## Delivery, measured
+
+**The reminder has been delivered by a running DSH.** First live run
+2026-10-02, in session `session-ee71145b`, on a `/compact` issued as
+`cmd-9aa96fc7-1`. From the session log alone:
+
+| record | seq |
+| --- | --- |
+| `compaction/start` | 191 |
+| `compaction/summary` | 193 |
+| `compaction/end` | 195 |
+| newest `todo/write` (4 items) | 142 |
+| `step/start`, the first after the compaction | 199 |
+| durable reminder for that step | 202 |
+| `step/start`, the next step | 212 |
+| durable reminder for that step | 213 |
+
+Each reminder is a `user/message` whose `data.source.kind` is `compaction-todo`
+and whose `surfaceOp` is `append`, carrying text byte-identical to what
+`renderReminder` produces.
+
+The run then continued, and the repeat behaved as designed in both directions.
+The compaction stayed at seq 195 while the newest write stayed at seq 142, so the
+condition kept holding and **13 reminders were written, one per step, for the 13
+steps between the compaction and the next write** (seq 202 through 289). A
+`todo_write` at seq 292 then moved the list, and the reminders stopped: 23 further
+steps ran in that session and not one carried a reminder, so no reminder has a
+seq above 292. Re-injecting until the list moves is therefore the measured live
+behaviour and not only a hedge — it repeats while the compaction is newer than the
+list, and goes quiet the moment the list moves.
+
+This also settles the assumption the plugin was written to avoid depending on:
+**a message a plugin contributes at `agent/pre-step` is durable in the session
+log**, not single-step. That is a property of the harness rather than of this
+plugin, so it is worth knowing for any future injection at the same seam.
+
+One earlier claim in this file was wrong and is withdrawn. A firing does not
+leave "a log line, not a visible marker": the plugin does log
+`compaction-todo: re-injected N todo(s) after compaction at seq X`, but host
+logger output is not written anywhere a live session can be inspected for it —
+there is no log file and no log record type in the session log containing it.
+The trace that does exist is the durable message, which is stronger evidence
+than the log line would have been: it proves delivery, not merely the decision.
