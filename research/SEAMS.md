@@ -84,6 +84,64 @@ The substrate to fix this is already in place. `tools/post-execute` can inject c
 already being made to the server, and the only missing pieces are the freshness and accumulation
 semantics the README says are undecided.
 
+**Corrected 2026-10-02, after measuring this installation and then checking upstream.** The last
+paragraph is wrong, and the fix is smaller than it first looked.
+
+The client is not *mounted*. DSH's package catalog describes three packages — `@deepseek-ai/dsh-lsp`
+(the `ctx.lsp` seam), `@deepseek-ai/dsh-lsp-stdio` (the stdio provider) and `@deepseek-ai/dsh-tool-lsp`
+(the model-facing tool) — and none is installed in this profile: zero occurrences of
+`publishDiagnostics`, `textDocument/definition`, `textDocument/hover` and `initializeParams` across
+the installed `@deepseek-ai/dsh` tree and the 116 MB Electron bundle, against controls that find
+`tools/post-execute` 28 and 50 times respectively. They are nevertheless **published and opt-in** —
+`0.0.1-rc.1`, `0.0.1-rc.5` and `0.0.1-rc.1` on npm — so this is a row to add, not a package to write.
+An earlier draft of this correction said "three absent packages"; that was wrong, and a first check
+that appeared to confirm it was a void test, because `npm view` also failed for `dsh-tools`, which is
+installed. The bundled catalog table is the only trace of the subsystem in a stock install, which is
+a discoverability problem rather than a defect.
+
+And the extension this section asks for is **already proposed**. [Discussion
+781](https://github.com/deepseek-ai/deepseek-harness/discussions/781) takes the seam from four
+navigation operations to seven by adding `diagnostics`, `formatDocument` and `completion`, with a
+committed fork branch, a patch file, an `onNotification` path that stops discarding
+`publishDiagnostics`, and a bounded settle window for push-only servers. A consumer plugin
+(`dsh-lsp-actions`) works against the current seam today. So the sentence above — "the substrate is
+already in place, and the only missing pieces are the freshness and accumulation semantics" — has it
+backwards: the semantics are the part somebody has already written down, and the substrate is what
+is missing from a stock install.
+
+So "diagnostics through the existing LSP client" is not work for this repository. It is three opt-in
+rows plus a patch that already exists upstream and is waiting on maintainers. A second version built
+here would duplicate #781 rather than advance it.
+
+### 1b. And the problem it would solve is rare here
+
+The task proposing it carried its own decision rule: measure how often an edit breaks the project
+check, and drop the idea rather than stack tools if `verify-on-edit` already covers it.
+
+Measured across the whole corpus — 56 sessions, 1,508 edit-class tool calls:
+
+| | |
+|---|---|
+| delivered `verify-on-edit` firings | **2** |
+| sessions affected | 2 of 56 |
+| observed break rate | 0.13% of edit-class calls |
+
+Both were syntax errors caught by a typecheck, one in `patches/enable-cordis-skills.mjs` and one in
+`tools/scratch-verify.mjs`. A false positive is worth naming because the first pass counted it: a
+`read` of this repository's own README returns rendered sample output, and matching the marker text
+alone credits that as a firing. The count above requires a rendered report with a numeric count, and
+fixes the report to `user/message` records, which is where delivery lands.
+
+The confound is real and it caps what the number means. `verify-on-edit` returns silently when the
+check passes (`exitCode === 0`), silently when no check is detected, and warns to a logger whose
+output is captured nowhere. So 2 is the count of **observed** breaks, not a denominator over
+"edits that were checked" — if detection failed in some sessions, the true rate is higher and
+nothing in the log would say so.
+
+Even read generously, this does not support building a second detector. The cheaper and more honest
+move is to make the existing one's silence less ambiguous, which is a logging problem, not a
+language-server problem.
+
 ### 2. Nothing knows how to verify a project
 
 Neither harness has a concept of "the command that tells you this project is still correct". Codex's
@@ -171,15 +229,19 @@ already generates a tool catalog (`docs/tool-catalog.md`), so the material exist
 
 ## Recommended order
 
-1. **Diagnostics through the existing LSP client.** Highest value by a distance, because it removes
-   the fragile parsing every verification plugin currently needs, and the client is already talking
-   to the server. The open question is the one the README names: when a diagnostic is fresh, and how
-   they accumulate.
+1. ~~**Diagnostics through the existing LSP client.**~~ **Not this repository's to build.** It is
+   already proposed upstream with a working patch and a live consumer plugin (#781), and the three
+   packages are published opt-in rows rather than unwritten code. Its measured value is in §1b: the
+   failure it would catch happened twice in 1,508 edit calls, and the existing compile-based checker
+   caught both. If the seam extension lands and this repository wants it, the move is to add the
+   rows and adopt #781's patch — not to write a second one.
 2. **A declared check target.** Cheapest of the three. A project says how to check itself, once, and
    every plugin stops guessing.
 3. **A live change query.** Have `ctx.workspaceChanges` answer "what has changed since sequence N"
    during a turn, including shell edits. That turns my timer into a fact and fixes attribution for
    bash-driven changes.
 
-Until 1 lands, the parser stays, and the honest framing is that it is a workaround with a known
-expiry date, not a design.
+Until an upstream diagnostics channel lands, the parser stays, and the honest framing is that it is a
+workaround with no expiry date in sight. What the measurement above adds is that the workaround is
+guarding a rare failure, so the urgent thing is not a better detector — it is knowing when the
+existing one stayed silent.

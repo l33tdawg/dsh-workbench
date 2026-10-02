@@ -142,6 +142,40 @@ validateJsonSchemaValue(schema, { file_path: 'a', wat: 1 })              // []  
 The filed report uses the corrected example. Worth the correction: a report whose first
 reproduction does not reproduce gets closed on that basis, whatever else it says.
 
+### The LSP diagnostics request is already filed, and better than ours would have been
+
+Task `423df7d2` proposed feeding LSP diagnostics into the edit loop, and the follow-up task proposed
+filing it upstream. **Neither was filed, because the search for a duplicate found the report already
+there.** [Discussion 781](https://github.com/deepseek-ai/deepseek-harness/discussions/781) takes the
+`ctx.lsp` seam from four navigation operations to seven by adding `diagnostics`, `formatDocument` and
+`completion` — with a committed fork branch, a patch file, an `onNotification` path that stops
+discarding `publishDiagnostics`, and a bounded settle window for push-only servers. A consumer plugin
+(`dsh-lsp-actions`) works against the current seam today. Ours would have been a strictly worse
+duplicate, and posting it would have added noise to a thread waiting on maintainers.
+
+The second candidate died the same way. Measured this session: `ctx.logger` output from a plugin
+leaves no durable trace anywhere — no log file under `~/.dsh`, no log-shaped record type in the
+session log — which makes a plugin's warning unreadable after the fact. That is
+[2905](https://github.com/deepseek-ai/deepseek-harness/discussions/2905), whose title is literally
+"`ctx.logger` has no sink in any shipped profile", and
+[5138](https://github.com/deepseek-ai/deepseek-harness/discussions/5138), "dsh silently drops
+warnings today".
+
+One correction to an earlier draft of this entry, kept because the mistake is the instructive part.
+It said the three LSP packages were "absent". They are not: `@deepseek-ai/dsh-lsp` 0.0.1-rc.1,
+`dsh-lsp-stdio` 0.0.1-rc.5 and `dsh-tool-lsp` 0.0.1-rc.1 are all published, and none is *mounted* in
+this profile — which is a row to add, not a package to write. The first check appeared to confirm
+absence and was void: `npm view` returned nothing for `dsh-tools` too, and that one is installed. A
+control that fails is worth more than the result it was guarding.
+
+**What is worth keeping is the demand-side number**, because neither existing thread has it. Across
+56 sessions and 1,508 edit-class tool calls, the failure this would catch — an edit that breaks the
+project check — occurred **twice**, and the existing compile-based checker caught both. So the value
+of the seam extension is latency and precision, not coverage. That measurement is recorded in
+[`../research/SEAMS.md`](../research/SEAMS.md) §1b. It was deliberately **not** posted as a comment
+on 781: arguing down someone else's proposal, on their thread, is their call and not ours to make
+unasked.
+
 ## Still open
 
 Nothing from the original analysis is unfiled. The remaining gaps in
