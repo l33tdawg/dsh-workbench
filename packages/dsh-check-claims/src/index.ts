@@ -20,6 +20,7 @@
  */
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { isAbsolute, resolve } from 'node:path'
 import { countMatches, judge, type CountResult } from './match.ts'
 import { formatReport, type CheckValue, type ReportValue, type Verdict } from './report.ts'
 import { scan, type ScanSource } from './scan.ts'
@@ -45,15 +46,26 @@ const MAX_TOKEN = 400
 const REVISION = /^[A-Za-z0-9._/@^~-]+$/
 
 /**
- * A workspace-relative path, restricted to characters that cannot alter a
- * command. `..` is rejected separately because it escapes the workspace.
+ * A path to scan, restricted to characters that cannot alter a command, and
+ * holding no whitespace at all. `..` is rejected separately, which is what
+ * keeps a relative path inside its base. A real directory name with a space in
+ * it goes in `root` instead, which reaches no command line and so can be
+ * checked by a different rule.
  */
 const RELATIVE_PATH = /^[A-Za-z0-9._/@+-]+$/
+
+/**
+ * Characters a scan root may not contain. Deliberately not the allowlist above:
+ * a real directory name can hold a space or a comma, and a root never reaches a
+ * command line, so only what would break a report is refused.
+ */
+const UNSAFE_ROOT = /[\u0000-\u001f\u007f]/
 
 /** One check as supplied by the model. */
 interface CheckArgs {
   pattern: string
   path: string
+  root?: string
   expect?: number
   atLeast?: number
   at?: string
@@ -106,6 +118,34 @@ export function assertSafeToken(value: string, kind: 'revision' | 'path'): strin
 }
 
 /**
+ * Validate a scan root, which unlike a path may leave the workspace.
+ *
+ * A root is read from the filesystem and never embedded in a command, so the
+ * character allowlist a path needs would only refuse legitimate directory
+ * names. What is refused instead is everything that would make the scan base
+ * ambiguous in the report: a `..` segment, or a control character.
+ *
+ * @param value - the caller-supplied root.
+ * @returns the root, unchanged.
+ * @throws {Error} when the value is empty, too long, or ambiguous.
+ */
+export function assertSafeRoot(value: string): string {
+  if (value.length === 0 || value.length > MAX_TOKEN) {
+    throw new Error(`root must be 1-${MAX_TOKEN} characters`)
+  }
+  if (UNSAFE_ROOT.test(value)) {
+    throw new Error(`root "${value}" contains a control character`)
+  }
+  if (value.split('/').includes('..')) {
+    throw new Error(
+      `root "${value}" contains ".."; pass the resolved path instead, `
+      + 'so the report names the directory that was actually scanned',
+    )
+  }
+  return value
+}
+
+/**
  * The git runner, built from the shell service when the composition has one.
  *
  * Every token passed here has already cleared {@link assertSafeToken}, so the
@@ -152,6 +192,7 @@ export const OUTPUT_SCHEMA = {
                 pattern: { type: 'string', required: true },
                 path: { type: 'string', required: true },
                 at: { required: true, oneOf: [{ type: 'string' }, { type: 'null' }] },
+                root: { required: true, oneOf: [{ type: 'string' }, { type: 'null' }] },
                 verdict: { type: 'string', required: true, enum: ['pass', 'fail', 'unknown'] },
                 count: { type: 'integer', required: true },
                 detail: { type: 'string', required: true },
@@ -206,7 +247,9 @@ export function apply(ctx: {
       + 'The count is exact and never truncated, and a check whose scan stopped early is reported '
       + 'as undecided rather than passing. Set `at` to read a git revision instead of the working '
       + 'tree, which is the difference between a claim about upstream and a claim about your own '
-      + 'checkout.',
+      + 'checkout. Set `root` when the claim is about a tree outside the session workspace: a '
+      + 'relative root is resolved against the workspace, an absolute one is used as given, and '
+      + 'the report names the base it actually scanned.',
     parameters: {
       checks: {
         type: 'array',
@@ -217,7 +260,8 @@ export function apply(ctx: {
           additionalProperties: false,
           properties: {
             pattern: { type: 'string', required: true, description: 'Regular expression source.' },
-            path: { type: 'string', required: true, description: 'File or directory, relative to the session workspace.' },
+            path: { type: 'string', required: true, description: 'File or directory, relative to the session workspace, or relative to `root` when one is given.' },
+            root: { type: 'string', description: 'Directory to scan from, when the claim is about a tree outside the session workspace. Absolute, or relative to the workspace. Mutually exclusive with `at`.' },
             expect: { type: 'integer', description: 'Exact number of matches required. Use 0 to claim absence.' },
             atLeast: { type: 'integer', description: 'Minimum number of matches required.' },
             at: { type: 'string', description: 'Git revision to read, such as origin/master. Defaults to the working tree.' },
@@ -253,10 +297,14 @@ export function apply(ctx: {
  * @returns the check's result.
  */
 async function runOne(request: CheckArgs, root: string, shell: ShellLike | undefined): Promise<CheckValue> {
+  const workspace = resolve(root)
   const base: CheckValue = {
     pattern: request.pattern,
     path: request.path,
     at: request.at ?? null,
+    root: request.root === undefined
+      ? null
+      : (isAbsolute(request.root) ? resolve(request.root) : resolve(workspace, request.root)),
     verdict: 'unknown',
     count: 0,
     detail: '',
@@ -267,11 +315,18 @@ async function runOne(request: CheckArgs, root: string, shell: ShellLike | undef
   let source: ScanSource
   try {
     assertSafeToken(request.path, 'path')
+    if (request.root !== undefined) {
+      if (request.at !== undefined) {
+        return { ...base, detail: 'root and at are mutually exclusive: a revision is read in one repository' }
+      }
+      assertSafeRoot(request.root)
+    }
+    const scanRoot = base.root ?? workspace
     if (request.at === undefined) {
-      source = workingTreeSource(root)
+      source = workingTreeSource(scanRoot)
     } else {
       assertSafeToken(request.at, 'revision')
-      const run = gitRunner(shell, root)
+      const run = gitRunner(shell, scanRoot)
       if (run === undefined) {
         return { ...base, detail: 'no shell service is mounted, so a revision cannot be read' }
       }
@@ -283,17 +338,20 @@ async function runOne(request: CheckArgs, root: string, shell: ShellLike | undef
 
   let counted: CountResult
   try {
-    counted = countMatches(await scan(source, request.path), request.pattern, request.flags)
+    counted = countMatches(await scan(source, request.path, base.root), request.pattern, request.flags)
   } catch (error: unknown) {
     return { ...base, detail: (error as Error).message }
   }
 
   const judgement = judge(counted, { expect: request.expect, atLeast: request.atLeast })
+  // A scan rooted elsewhere names its own base, because its relative paths
+  // would otherwise read as workspace paths that do not exist.
+  const scope = base.root === null ? source.describe : `${source.describe} rooted at ${base.root}`
   return {
     ...base,
     verdict: judgement.verdict as Verdict,
     count: counted.count,
-    detail: `${judgement.detail} [${source.describe}]`,
+    detail: `${judgement.detail} [${scope}]`,
     incomplete: counted.incomplete,
     sites: counted.sites,
   }

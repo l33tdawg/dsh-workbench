@@ -73,23 +73,59 @@ function isLikelyFile(path: string): boolean {
 }
 
 /**
+ * Strip a scan base from a candidate path, leaving what the caller named.
+ *
+ * A relative path is already relative to the base and comes back unchanged. An
+ * absolute path is reported relative to the base only when it really sits under
+ * it: `/w2/f` is not under `/w`, and the separator test is what keeps a
+ * sibling directory from being trimmed into a path that reads as inside.
+ *
+ * @param path - the candidate path.
+ * @param base - the absolute scan base, when there is one.
+ * @returns the path to report.
+ */
+function relativize(path: string, base: string | undefined): string {
+  if (base === undefined || !path.startsWith('/')) return path
+  const prefix = base.endsWith('/') ? base : `${base}/`
+  return path.startsWith(prefix) ? path.slice(prefix.length) : path
+}
+
+/**
  * Read everything a source covers under a path.
  *
  * A path naming a file is read directly. A directory is walked, and the walk
  * stops with `incomplete: true` once `maxFiles` is reached rather than
  * pretending the remainder does not exist.
  *
+ * A file over `maxFileBytes` is skipped, because counting inside a file this
+ * tool cannot read is exactly the mistake it exists to prevent: a directory
+ * holding one small file and one oversized file would otherwise report the
+ * oversized file's contents as absent. Skipping is safe only alongside
+ * `incomplete: true`.
+ *
  * @param source - the injected I/O.
  * @param path - workspace-relative file or directory to cover.
+ * @param base - the scan root `path` is relative to, when that is not the
+ * session workspace's own root. Scanning from another base is what makes a
+ * claim about an upstream checkout checkable at all.
  * @param limits - bounds for this scan.
  * @returns the files read, and whether the scan was complete.
  */
-export async function scan(source: ScanSource, path: string, limits: ScanLimits = DEFAULT_LIMITS): Promise<ScanResult> {
+export async function scan(
+  source: ScanSource,
+  path: string,
+  base: string | undefined = undefined,
+  limits: ScanLimits = DEFAULT_LIMITS,
+): Promise<ScanResult> {
   const candidates = isLikelyFile(path) ? [path] : await source.list(path)
   const files: ScannedFile[] = []
   let skipped = 0
+  let oversized = 0
 
   for (const candidate of candidates) {
+    // Reported relative to the scan base, so a site stays openable from the
+    // directory the caller named rather than from the workspace.
+    const shown = relativize(candidate, base)
     if (files.length >= limits.maxFiles) {
       return {
         files,
@@ -107,6 +143,7 @@ export async function scan(source: ScanSource, path: string, limits: ScanLimits 
     const bytes = Buffer.byteLength(text, 'utf8')
     if (bytes > limits.maxFileBytes) {
       skipped++
+      oversized++
       continue
     }
     // A NUL byte in the first block means binary; counting matches in it would
@@ -115,10 +152,18 @@ export async function scan(source: ScanSource, path: string, limits: ScanLimits 
       skipped++
       continue
     }
-    files.push({ path: candidate, text })
+    files.push({ path: shown, text })
   }
 
   const result: ScanResult = { files, incomplete: false, read: files.length, skipped }
+  // Size is not binary-ness: an oversized file holds text this scan did not
+  // read, so its matches are missing from the count rather than noise in it.
+  // Leaving `incomplete` false here would turn a bound into a false pass.
+  if (oversized > 0) {
+    result.incomplete = true
+    result.reason =
+      `skipped ${oversized} file${oversized === 1 ? '' : 's'} over the ${limits.maxFileBytes}-byte limit`
+  }
   // A directory that listed nothing is not incomplete, but a path that does not
   // exist is worth distinguishing, so the caller is told which it got.
   if (candidates.length === 0) result.reason = 'nothing to read at this path'

@@ -10,7 +10,7 @@
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative, sep } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import { SKIPPED_DIRECTORIES, type ScanSource } from './scan.ts'
 
 /** Runs a command and returns its stdout, or throws with stderr attached. */
@@ -19,14 +19,24 @@ export type RunCommand = (command: string, args: string[]) => Promise<string>
 /**
  * A source reading the live working tree.
  *
+ * A path naming a file or directory is normally relative to `root`. An
+ * absolute path is read as itself, which is how a claim about a tree outside
+ * the workspace is checked: `root` is where a relative path starts, not a fence
+ * every read stays behind.
+ *
+ * Candidates under an absolute path come back relative to `root` when they sit
+ * under it, and absolute otherwise, so a caller can always resolve them through
+ * the same `root` it passed in.
+ *
  * @param root - absolute workspace root.
- * @returns a source whose paths are relative to `root`.
+ * @returns a source whose paths are relative to `root` unless they fall outside
+ * it, in which case they are absolute.
  */
 export function workingTreeSource(root: string): ScanSource {
   return {
     describe: 'working tree',
     async list(path: string): Promise<string[]> {
-      const absolute = join(root, path)
+      const absolute = resolve(root, path)
       let info
       try {
         info = statSync(absolute)
@@ -41,7 +51,7 @@ export function workingTreeSource(root: string): ScanSource {
     },
     async read(path: string): Promise<string | undefined> {
       try {
-        return readFileSync(join(root, path), 'utf8')
+        return readFileSync(resolve(root, path), 'utf8')
       } catch {
         return undefined
       }
@@ -52,10 +62,10 @@ export function workingTreeSource(root: string): ScanSource {
 /**
  * Recursively collect regular files, skipping dependency and build directories.
  * @param directory - absolute directory to walk.
- * @param root - absolute root the returned paths are relative to.
+ * @param base - absolute directory the returned paths are relative to.
  * @param found - accumulator.
  */
-function walk(directory: string, root: string, found: string[]): void {
+function walk(directory: string, base: string, found: string[]): void {
   let entries
   try {
     entries = readdirSync(directory, { withFileTypes: true })
@@ -66,9 +76,9 @@ function walk(directory: string, root: string, found: string[]): void {
     const absolute = join(directory, entry.name)
     if (entry.isDirectory()) {
       if (SKIPPED_DIRECTORIES.includes(entry.name)) continue
-      walk(absolute, root, found)
+      walk(absolute, base, found)
     } else if (entry.isFile()) {
-      found.push(toPosix(relative(root, absolute)))
+      found.push(toPosix(relative(base, absolute)))
     }
   }
 }

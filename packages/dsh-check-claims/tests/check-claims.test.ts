@@ -15,12 +15,12 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { describe, it } from 'node:test'
 import { countMatches, judge, lineAt, type MatchSite } from '../src/match.ts'
-import { assertSafeToken, inject, name, OUTPUT_SCHEMA, TOOL_NAME, apply } from '../src/index.ts'
+import { assertSafeRoot, assertSafeToken, inject, name, OUTPUT_SCHEMA, TOOL_NAME, apply } from '../src/index.ts'
 import { DEFAULT_LIMITS, scan, type ScanResult, type ScanSource } from '../src/scan.ts'
-import { formatReport, type CheckValue, type Verdict } from '../src/report.ts'
+import { formatReport, type CheckValue, type ReportValue, type Verdict } from '../src/report.ts'
 import { revisionSource, workingTreeSource } from '../src/sources.ts'
 
 /** Build a scan result from literal files. */
@@ -162,10 +162,32 @@ describe('the scanner', () => {
 
   it('marks a scan incomplete at the file limit rather than under-reporting', async () => {
     const files = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`f${i}.txt`, 'x']))
-    const result = await scan(literalSource(files), 'f', { maxFiles: 3, maxFileBytes: 1000 })
+    const result = await scan(literalSource(files), 'f', undefined, { maxFiles: 3, maxFileBytes: 1000 })
     assert.equal(result.files.length, 3)
     assert.equal(result.incomplete, true)
     assert.match(result.reason ?? '', /10 files were in scope/)
+  })
+
+  it('marks a scan incomplete when it skips an oversized file', async () => {
+    // The failure this guards: a big file is the only place the needle lives,
+    // and a small neighbour makes the scan look complete.
+    const files = { 'src/small.ts': 'nothing here\n', 'src/big.ts': `needle\n${'x'.repeat(3000)}` }
+    const result = await scan(literalSource(files), 'src', undefined, { maxFiles: 100, maxFileBytes: 2000 })
+    assert.equal(result.files.length, 1)
+    assert.equal(result.skipped, 1)
+    assert.equal(result.incomplete, true)
+    assert.match(result.reason ?? '', /over the 2000-byte limit/)
+  })
+
+  it('will not report an absence it could not check, so a skipped file cannot pass', async () => {
+    const files = { 'src/small.ts': 'nothing here\n', 'src/big.ts': `needle\n${'x'.repeat(3000)}` }
+    const counted = countMatches(
+      await scan(literalSource(files), 'src', undefined, { maxFiles: 100, maxFileBytes: 2000 }),
+      'needle',
+    )
+    // The needle is present, in the file that was skipped. "expect 0" used to
+    // pass here, which is the one answer the tool must never give.
+    assert.equal(judge(counted, { expect: 0 }).verdict, 'unknown')
   })
 
   it('skips binary files, because matches in them are noise', async () => {
@@ -178,6 +200,43 @@ describe('the scanner', () => {
     const result = await scan(literalSource({ 'one.txt': 'a', 'other.txt': 'b' }), 'one.txt')
     assert.equal(result.files.length, 1)
     assert.equal(result.files[0].path, 'one.txt')
+  })
+})
+
+describe('reading outside the workspace', () => {
+  // Task 54cb2d02: the tool could not answer the question it was built for,
+  // because its own README example reads a checkout that is not the workspace.
+  const outside = mkdtempSync(join(tmpdir(), 'claims-outside-'))
+  mkdirSync(join(outside, 'packages', 'sandbox'), { recursive: true })
+  writeFileSync(join(outside, 'packages', 'sandbox', 'index.ts'), 'export const guard = 1\n')
+
+  it('scans a tree the workspace does not contain', async () => {
+    const source = workingTreeSource(outside)
+    const result = await scan(source, 'packages/sandbox/index.ts', outside)
+    assert.equal(result.incomplete, false)
+    assert.deepEqual(result.files.map(file => file.path), ['packages/sandbox/index.ts'])
+  })
+
+  it('reports a site relative to the base it actually scanned', async () => {
+    const source = workingTreeSource(outside)
+    const counted = countMatches(await scan(source, 'packages/sandbox/index.ts', outside), 'guard')
+    assert.deepEqual(counted.sites, [{ path: 'packages/sandbox/index.ts', line: 1 }])
+  })
+
+  it('reads an absolute path as itself, not as a path inside the root', async () => {
+    // The trap this guards: join(root, anAbsolutePath) returns the absolute
+    // path, so an absolute read appears to work while a relative one is what
+    // actually resolves. Put the same basename under the root and the two
+    // answers diverge, which is when the wrong base gets caught.
+    const elsewhere = mkdtempSync(join(tmpdir(), 'claims-elsewhere-'))
+    const absolute = join(elsewhere, 'only.ts')
+    writeFileSync(absolute, 'outside\n')
+    writeFileSync(join(outside, 'only.ts'), 'inside\n')
+    const source = workingTreeSource(outside)
+
+    assert.equal(await source.read('only.ts'), 'inside\n')
+    assert.equal(await source.read(absolute), 'outside\n', 'the absolute path is not read through the root')
+    assert.deepEqual(await source.list(absolute), [relative(outside, absolute)])
   })
 })
 
@@ -218,10 +277,19 @@ describe('reading a revision', () => {
 
   it('names the revision in the report so the scope is visible', () => {
     const check: CheckValue = {
-      pattern: 'x', path: 'p', at: 'origin/master', verdict: 'pass',
+      pattern: 'x', path: 'p', at: 'origin/master', root: null, verdict: 'pass',
       count: 1, detail: 'found 1, expected 1 [revision origin/master]', incomplete: false, sites: [],
     }
     assert.match(formatReport({ checks: [check] }), /p @ origin\/master/)
+  })
+
+  it('names an outside base in the report, so the scope is visible', () => {
+    const check: CheckValue = {
+      pattern: 'x', path: 'packages/sandbox', at: null, root: '/tmp/extracted/app.asar/dsh', verdict: 'pass',
+      count: 1, detail: 'found 1, expected 1 [working tree rooted at /tmp/extracted/app.asar/dsh]',
+      incomplete: false, sites: [],
+    }
+    assert.match(formatReport({ checks: [check] }), /rooted at \/tmp\/extracted\/app\.asar\/dsh/)
   })
 })
 
@@ -237,6 +305,29 @@ describe('token validation', () => {
 
   it('refuses a path that escapes the workspace', () => {
     assert.throws(() => assertSafeToken('../../etc/passwd', 'path'), /contains "\.\."/)
+  })
+
+  // The widening must not make a relative path able to leave its base, which is
+  // still what `..` is refused for. Leaving is what `root` is for, explicitly.
+  it('keeps a relative path inside its base while a root may leave it', () => {
+    assert.throws(() => assertSafeToken('../../etc/passwd', 'path'), /contains "\.\."/)
+    assert.equal(assertSafeRoot('/etc/passwd'), '/etc/passwd')
+  })
+
+  it('refuses a root whose scan base would be ambiguous', () => {
+    assert.throws(() => assertSafeRoot('/tmp/../etc'), /contains "\.\."/)
+    assert.throws(() => assertSafeRoot('/tmp/a\u0000b'), /control character/)
+    assert.throws(() => assertSafeRoot(''), /1-400 characters/)
+  })
+
+  it('accepts the roots a real claim uses', () => {
+    for (const good of [
+      '/Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh',
+      '/tmp/extracted',
+      'sibling-checkout',
+    ]) {
+      assert.equal(assertSafeRoot(good), good)
+    }
   })
 
   it('accepts the revisions and paths a real claim uses', () => {
@@ -268,13 +359,13 @@ describe('plugin contract', () => {
     const declared = Object.keys(
       (OUTPUT_SCHEMA.properties.checks.items as { properties: Record<string, unknown> }).properties,
     )
-    const returned = ['pattern', 'path', 'at', 'verdict', 'count', 'detail', 'incomplete', 'sites']
+    const returned = ['pattern', 'path', 'at', 'root', 'verdict', 'count', 'detail', 'incomplete', 'sites']
     assert.deepEqual(returned.filter(key => !declared.includes(key)), [])
   })
 
   it('renders a failure with the fix-the-claim warning', () => {
     const failing: CheckValue = {
-      pattern: 'x', path: 'p', at: null, verdict: 'fail' as Verdict,
+      pattern: 'x', path: 'p', at: null, root: null, verdict: 'fail' as Verdict,
       count: 3, detail: 'found 3, expected 0', incomplete: false,
       sites: [{ path: 'p', line: 12 }],
     }
@@ -282,6 +373,41 @@ describe('plugin contract', () => {
     assert.match(text, /\[FAIL\]/)
     assert.match(text, /p:12/)
     assert.match(text, /Fix the claim, not the pattern/)
+  })
+
+  // Task 54cb2d02, end to end through the registered tool rather than the
+  // scanner: the claim being checked is about a tree the workspace does not
+  // contain, which is the case the tool was built for and could not answer.
+  it('answers a claim about a tree outside the workspace', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'claims-ws-'))
+    const checkout = mkdtempSync(join(tmpdir(), 'claims-checkout-'))
+    mkdirSync(join(checkout, 'packages', 'sandbox'), { recursive: true })
+    writeFileSync(join(checkout, 'packages', 'sandbox', 'index.ts'), 'export const guard = 1\n')
+    writeFileSync(join(workspace, 'local.ts'), 'export const guard = 1\n')
+
+    const registered: { execute: (args: unknown, exec: unknown) => Promise<ReportValue> }[] = []
+    apply({
+      systemPrompt: { section: () => () => {}, getSectionOrder: () => 0 },
+      tools: { register: (tool: unknown) => { registered.push(tool as typeof registered[0]); return () => {} }, get: () => ({}) },
+      get: () => undefined,
+    } as never)
+
+    const exec = { agent: { session: { header: { cwd: workspace } } } }
+    const { checks } = await registered[0].execute({
+      checks: [
+        { pattern: 'guard', path: 'packages/sandbox/index.ts', root: checkout, atLeast: 1 },
+        // The control: the same claim without a root cannot see the checkout at
+        // all, so the root is what answered it rather than a coincidence.
+        { pattern: 'guard', path: 'packages/sandbox/index.ts', atLeast: 1 },
+      ],
+    }, exec)
+
+    assert.equal(checks[0].verdict, 'pass')
+    assert.equal(checks[0].root, checkout)
+    assert.match(checks[0].detail, /rooted at /)
+    assert.deepEqual(checks[0].sites, [{ path: 'packages/sandbox/index.ts', line: 1 }])
+    assert.equal(checks[1].verdict, 'unknown')
+    assert.match(checks[1].detail, /examined no files/)
   })
 
   it('registers a scope-guarded section, so an agent without the tool is not told to use it', () => {

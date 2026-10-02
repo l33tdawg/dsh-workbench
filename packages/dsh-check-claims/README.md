@@ -56,6 +56,11 @@ uninformative, and it is the shape a mistyped path takes.
 claim about upstream is answered by upstream. The report names the source, so `[working tree]` and
 `[revision origin/master]` are never confused.
 
+**A claim about another tree names that tree.** `root` sets the base a relative `path` is resolved
+against: the session workspace by default, any directory when given, and an absolute `root` reads a
+tree the workspace does not contain. The report says which base it used, because a count from the
+right path in the wrong tree is the mistake this parameter exists to remove.
+
 **Scope is in every line, pass or fail.** A passing check still states what was searched.
 `PASS` alone would hide the failure this tool exists to catch.
 
@@ -75,14 +80,26 @@ the honest answer more often than a hand search admits.
 | Field | |
 |---|---|
 | `pattern` | Regular expression source. Required. |
-| `path` | File or directory relative to the session workspace. Required. |
+| `path` | File or directory, relative to `root` when one is given and to the session workspace otherwise. Required. |
+| `root` | Directory to scan from, absolute or workspace-relative. Mutually exclusive with `at`. |
 | `expect` | Exact match count required. `0` claims absence. |
 | `atLeast` | Minimum match count required. |
 | `at` | Git revision, such as `origin/master`. Defaults to the working tree. |
 | `flags` | Regex flags such as `i` or `s`. `g` is added. |
 
 `pattern` and `at` are embedded in a command line for revision reads, so both are validated against
-a character allowlist and refused rather than escaped. `..` is rejected in a path.
+a character allowlist and refused rather than escaped. `..` is rejected in a `path`, which is what
+keeps a relative path inside its base.
+
+`root` reaches no command line, so it is validated by a different rule: any directory name is
+accepted, including one with a space in it, and only a `..` segment or a control character is
+refused. Pass the resolved path, so the report names the directory that was actually scanned. To
+read a checkout that is not the workspace:
+
+```jsonc
+{ "pattern": "guard", "path": "packages/sandbox/index.ts",
+  "root": "/tmp/extracted/dsh", "atLeast": 1 }
+```
 
 ## Install
 
@@ -99,5 +116,11 @@ a character allowlist and refused rather than escaped. `..` is rejected in a pat
 The scan reads files into memory and counts with a JavaScript regex, so it is bounded by
 `maxFiles` (20,000) and `maxFileBytes` (2 MB per file). Reaching either bound sets `incomplete`,
 which is reported rather than hidden. Binary files and dependency directories are skipped.
+
+An oversized file is the bound that matters most, because it is the one that can hide a match: a
+directory holding one small file and one 4 MB file answers about the small file only. So the size
+bound sets `incomplete` and the reason names the files skipped, and a check that could have found
+its pattern in one of them returns `UNKNOWN` rather than `PASS`. A binary or dependency file is
+skipped silently by comparison, since a match inside one is noise rather than evidence.
 
 A count is not an argument. This checks whether a claim is true of the code, not whether it matters.

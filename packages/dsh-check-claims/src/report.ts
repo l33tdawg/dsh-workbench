@@ -23,6 +23,11 @@ export interface CheckValue {
   pattern: string
   path: string
   at: string | null
+  /**
+   * Absolute base the scan ran from, or null when it ran from the session
+   * workspace. Named because a path alone does not say which tree was read.
+   */
+  root: string | null
   verdict: Verdict
   count: number
   detail: string
