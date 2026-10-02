@@ -1,3 +1,9 @@
+> **Superseded.** This is the drafting file, not what was posted. The filed
+> report was expanded and revised twice for prose after this draft, and the two
+> differ by roughly half their content. The canonical copy of discussion #8630
+> is [`../research/upstream/BUG-network-egress.md`](../research/upstream/BUG-network-egress.md),
+> written directly from the posted body. Kept for the drafting history only.
+
 # Sandbox modes named `read-only` / `workspace-write` do not restrict network egress
 
 **Component:** `packages/sandbox/*` · **Version:** `dsh-v0.2.0-rc.2` (`639ed0153`) · **Platform:** macOS, Linux
