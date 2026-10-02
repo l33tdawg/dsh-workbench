@@ -1,12 +1,16 @@
-# Editing a profile while DSH is running strips the agent's tools from live sessions
+# Editing a profile patch layer while DSH is running strips the agent's tools from live sessions
 
 **Severity:** high. The session stays alive but can no longer read, write, or run anything.
 
 ## What happens
 
-Editing a config file in the active profile directory while `dsh` is running removes most of the session's tools. The session keeps running, and every call to a removed tool returns `Error: unknown tool "<name>"`. Nothing in the transcript says why.
+Editing the profile's patch layer, `cordis.patch.yml`, while `dsh` is running removes most of the session's tools. The session keeps running, and every call to a removed tool returns `Error: unknown tool "<name>"`. Nothing in the transcript says why.
 
 Restarting restores everything, which is what makes it expensive to diagnose: it looks like the profile is broken, so the natural move is to revert the config change rather than restart.
+
+A later install that edited only `package.json` did not reproduce it, so the trigger looks specific to
+the patch list rather than to the profile directory in general. The evidence for that is under
+[the trigger](#the-trigger-is-narrower-than-any-profile-edit) below.
 
 ## Exactly what is lost
 
@@ -33,12 +37,16 @@ The practical effect: the session can still talk to its MCP servers, but it cann
 ## Reproduction
 
 1. Start `dsh`, confirm `bash` and `read` work.
-2. In another terminal, edit a config file under `~/.dsh/profiles/<name>/`. Appending a row to `cordis.patch.yml` and rewriting `package.json` both trigger it.
+2. In another terminal, write to `~/.dsh/profiles/<name>/cordis.patch.yml`. Changing a value in an
+   existing row is enough; the first and second events did that and appended a row respectively.
 3. Call `bash` in the running session.
 
 Expected: the edit has no effect until restart, or the reload completes and tools remain.
 
 Actual: 25 tools gone for the rest of the session.
+
+Editing only `package.json` did not reproduce it in a later attempt, so treat the patch file as the
+trigger and the manifest as unconfirmed.
 
 ## A control I ran
 
@@ -53,6 +61,23 @@ The first time, I had just installed three plugins and rewritten `package.json` 
 The second time, the only change was one value in `cordis.patch.yml`. Same result.
 
 `--dump-config` composes correctly in both states, and booting a throwaway copy of the same profile activates every entry, so composition is fine and the damage happens only in the live reconcile.
+
+## The trigger is narrower than "any profile edit"
+
+A third install refined this. Editing only `package.json` to add a bundle left the session intact:
+the tool count went 66 to 67, the new tool mounted, and nothing was lost. Both earlier events edited
+`cordis.patch.yml`.
+
+| Event | Profile file edited | Tool count |
+|---|---|---|
+| First | `package.json` and `cordis.patch.yml` | 65 to 41 |
+| Second | `cordis.patch.yml` only | 66 to 41 to 40 |
+| Third | `package.json` only | 66 to 67, intact |
+
+So the earlier framing, "editing any config file in the profile directory", is too broad. The
+correlation is with the patch layer. Two observations against one is not proof, and I have not run
+the edit that would confirm it because doing so costs a session, but it points at the patch list
+being what changes rather than the manifest.
 
 ## Mechanism
 
@@ -77,13 +102,17 @@ re-run `apply()`, which is why tools contributed by top-level rows came back. Th
 scope is not rebuilt, because the agent already exists and nothing recreates it, so every
 registration its preset made into that scope is gone.
 
-That accounts for the observed split precisely: root-contributed tools survived, preset-contributed
-tools did not. It does not explain the one anomaly above, `subagent` surviving while `subagent_fork`,
+That accounts for the observed split: root-contributed tools survived, preset-contributed tools did
+not. It does not explain the one anomaly above, `subagent` surviving while `subagent_fork`,
 `list_agents`, `send_message` and `interrupt_agent` vanished, which suggests `tool-subagent` is also
 mounted at root scope somewhere that I did not chase down.
 
-It also accounts for the silence. `reconcileProfilePatches` does raise on newly introduced activation
-failures:
+It also fits the third event: a manifest-only change that leaves the patch list identical produces
+an `entry.update` whose config is unchanged, so the tree is not rebuilt and nothing is stranded.
+That is a guess at the mechanism behind the correlation, not a measurement.
+
+It accounts for the silence, which is the expensive part. `reconcileProfilePatches` does raise on
+newly introduced activation failures:
 
 ```ts
 if (introduced.length > 0) throw new Error(activationDiagnostic(binName, introduced).trimEnd())
@@ -91,15 +120,6 @@ if (introduced.length > 0) throw new Error(activationDiagnostic(binName, introdu
 
 but nothing failed to activate. Every plugin is healthy. The tree they were mounted into for that
 agent is simply not the tree the agent is still holding.
-
-## Suggested direction
-
-A patch that changes one value in a profile layer should not require rebuilding the whole
-application. The root entry is the wrong granularity, and rebuilding it is what strands live agents.
-
-If the rebuild is unavoidable, then the agents holding scopes from the previous tree need rebuilding
-with it, or the reconcile should refuse and ask for a restart rather than leaving sessions with a
-partial registry and no diagnostic.
 
 ## Workaround
 
