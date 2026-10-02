@@ -18,8 +18,18 @@
  * tells the agent what it broke should reduce it. The number is only meaningful
  * compared against the same corpus under a different harness.
  *
+ * A pooled rate over a whole corpus can be carried by one session. On
+ * 2026-10-02 every one of the 24 post-install `read-after-edit` events came from
+ * a single 408-call session while 9 of the 10 sessions in that bucket recorded
+ * none. The pooled number was true and useless. So the report always prints the
+ * per-session distribution, and `--since` splits a corpus at an install time
+ * instead of leaving it to an ad-hoc script.
+ *
  * Usage:
- *   node session-audit.mjs [--root <sessions dir>] [--json] [--verbose]
+ *   node session-audit.mjs [--root <sessions dir>] [--since <date>] [--json] [--verbose]
+ *
+ *   --since   keep only sessions that STARTED at or after this instant; accepts
+ *             a date, a date-time, or an ISO string
  *
  * @module dsh-session-audit
  */
@@ -38,6 +48,25 @@ const value = name => {
 const ROOT = value('--root') ?? join(process.env.HOME ?? '', '.dsh', 'sessions')
 const AS_JSON = flag('--json')
 const VERBOSE = flag('--verbose')
+
+/**
+ * The `--since` instant, or undefined when the flag is absent.
+ *
+ * Rejecting an unparseable value rather than ignoring it is deliberate: a
+ * mistyped date that silently widened the corpus would make an after-install
+ * measurement look like a before-install one, which is the error this flag
+ * exists to prevent.
+ */
+const SINCE = (() => {
+  const raw = value('--since')
+  if (raw === undefined) return undefined
+  const at = Date.parse(raw)
+  if (Number.isNaN(at)) {
+    console.error(`--since is not a date: ${raw}`)
+    process.exit(2)
+  }
+  return at
+})()
 
 /** Zstd frames start with this magic; a session file is a concatenation of them. */
 const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
@@ -181,6 +210,62 @@ export function audit(records) {
   }
 }
 
+/**
+ * When a session started, from its header record.
+ *
+ * The header carries the creation instant, so a `--since` split uses when the
+ * session began rather than when its file was last written. A session that
+ * started before an install and kept running past it ran most of its calls
+ * under the old harness and belongs on the earlier side of the split.
+ *
+ * @param records - the session's parsed records.
+ * @returns the instant in epoch milliseconds, or undefined when unreadable.
+ */
+export function sessionStartedAt(records) {
+  for (const record of records) {
+    const at = record?.createdAt ?? record?.time
+    if (typeof at === 'number' && Number.isFinite(at)) return at
+  }
+  return undefined
+}
+
+/**
+ * The per-session shape of a set of rows.
+ *
+ * Pooled counts answer "how much rework happened"; this answers "in how many
+ * sessions", which is the question that decides whether a pooled rate means
+ * anything. One session with a high rate and nine at zero is a different
+ * finding from ten sessions at the pooled rate.
+ *
+ * @param rows - one row per analysed session.
+ * @returns zero counts, percentiles, median, worst, and the top contributors.
+ */
+export function distribution(rows) {
+  const per100 = row => (row.toolCalls === 0 ? 0 : (100 * row.undoEvents) / row.toolCalls)
+  const rates = rows.map(per100).sort((a, b) => a - b)
+  const at = fraction => {
+    if (rates.length === 0) return 0
+    const index = Math.min(rates.length - 1, Math.max(0, Math.ceil(fraction * rates.length) - 1))
+    return rates[index]
+  }
+  const ranked = [...rows].sort((a, b) => per100(b) - per100(a))
+  return {
+    sessions: rows.length,
+    withNoUndoEvents: rows.filter(row => row.undoEvents === 0).length,
+    withOneUndoEvent: rows.filter(row => row.undoEvents === 1).length,
+    shareFromTopSession: (() => {
+      const total = rows.reduce((sum, row) => sum + row.undoEvents, 0)
+      const top = ranked[0]
+      return total === 0 || top === undefined ? 0 : top.undoEvents / total
+    })(),
+    p50Per100: at(0.5),
+    p90Per100: at(0.9),
+    worst: ranked[0] === undefined
+      ? undefined
+      : { id: ranked[0].id, toolCalls: ranked[0].toolCalls, undoEvents: ranked[0].undoEvents, per100: per100(ranked[0]) },
+  }
+}
+
 /** Every session file under a root, largest first. */
 function sessions(root) {
   const found = []
@@ -215,11 +300,18 @@ function main() {
   }
 
   const rows = []
+  let skippedBySince = 0
   for (const file of files) {
     try {
-      const counts = audit(parseSession(readSession(file.path)))
+      const records = parseSession(readSession(file.path))
+      const startedAt = sessionStartedAt(records)
+      if (SINCE !== undefined && (startedAt === undefined || startedAt < SINCE)) {
+        skippedBySince++
+        continue
+      }
+      const counts = audit(records)
       if (counts.toolCalls === 0) continue
-      rows.push({ id: file.path.split('/').slice(-2)[0], size: file.size, ...counts })
+      rows.push({ id: file.path.split('/').slice(-2)[0], size: file.size, startedAt, ...counts })
     } catch (error) {
       if (VERBOSE) console.error(`skip ${file.path}: ${error.message}`)
     }
@@ -232,12 +324,25 @@ function main() {
     return acc
   }, {})
 
+  const shape = distribution(rows)
+
   if (AS_JSON) {
-    console.log(JSON.stringify({ root: ROOT, sessions: rows.length, total, rows }, null, 2))
+    console.log(JSON.stringify({
+      root: ROOT,
+      since: SINCE === undefined ? undefined : new Date(SINCE).toISOString(),
+      skippedBySince,
+      sessions: rows.length,
+      total,
+      distribution: shape,
+      rows,
+    }, null, 2))
     return
   }
 
   console.log(`sessions analysed: ${rows.length}`)
+  if (SINCE !== undefined) {
+    console.log(`started at/after:  ${new Date(SINCE).toISOString()} (${skippedBySince} older session(s) skipped)`)
+  }
   console.log(`tool calls:        ${total.toolCalls}`)
   console.log()
   console.log('undo-class events')
@@ -249,7 +354,18 @@ function main() {
   console.log(`  total            ${String(total.undoEvents).padStart(6)}`)
   console.log()
   const per100 = total.toolCalls === 0 ? 0 : (100 * total.undoEvents) / total.toolCalls
-  console.log(`rate: ${per100.toFixed(1)} undo-class events per 100 tool calls`)
+  const pct = n => `${(100 * n).toFixed(1)}%`
+  console.log(`pooled rate: ${per100.toFixed(1)} undo-class events per 100 tool calls`)
+  console.log()
+  console.log('per-session distribution')
+  console.log(`  sessions with none       ${String(shape.withNoUndoEvents).padStart(5)} of ${shape.sessions}`)
+  console.log(`  sessions with exactly one ${String(shape.withOneUndoEvent).padStart(4)} of ${shape.sessions}`)
+  console.log(`  median session            ${shape.p50Per100.toFixed(1).padStart(5)} per 100 calls`)
+  console.log(`  p90 session               ${shape.p90Per100.toFixed(1).padStart(5)} per 100 calls`)
+  if (shape.worst !== undefined) {
+    console.log(`  worst session             ${shape.worst.per100.toFixed(1).padStart(5)} per 100 calls  ${shape.worst.id}`)
+    console.log(`    it holds ${shape.worst.undoEvents} of ${total.undoEvents} events (${pct(shape.shareFromTopSession)} of the corpus)`)
+  }
   console.log(`files edited across the corpus: ${total.filesEdited}`)
 
   if (VERBOSE) {
