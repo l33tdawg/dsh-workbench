@@ -1,0 +1,8 @@
+# The check-claims bundle: one tool that turns a countable claim into a command
+# whose answer cannot be misread. Inserted as its own row; it reads the source
+# and changes nothing.
+
+- insert:
+    - id: check-claims
+      name: '@l33tdawg/dsh-check-claims'
+      config: {}

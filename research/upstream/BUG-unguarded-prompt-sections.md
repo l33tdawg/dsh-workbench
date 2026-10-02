@@ -1,14 +1,14 @@
-# Nine tool prompt sections render for agents that do not have the tools they describe
+# Ten tool prompt sections render for agents that do not have the tools they describe
 
 **Severity:** low. It costs tokens and, worse, instructs an agent to call tools it was not given.
 
 ## What happens
 
-Of the 21 `ctx.systemPrompt.section` registrations in `packages/`, 16 are tool sections. Seven guard on scope, so they disappear for an agent whose tool set excludes them. Nine do not, so they render for every agent.
+Shipped source under `packages/**/src` registers 30 `systemPrompt.section` calls. Eight guard on scope, so they disappear for an agent whose tool set excludes them. Of the 22 that do not, ten are tool sections.
 
 ## The guard
 
-`packages/fs/tool-fs/src/read.ts` and six others:
+`packages/fs/tool-fs/src/read.ts` and seven others:
 
 ```ts
 text: ({ scope }) => ctx.tools.get('read', scope) === undefined
@@ -16,9 +16,9 @@ text: ({ scope }) => ctx.tools.get('read', scope) === undefined
   : '...',
 ```
 
-**Guarded (7):** `tool:edit`, `tool:glob`, `tool:grep`, `tool:read`, `tool:web_fetch`, `tool:web_search`, `tool:write`.
+**Guarded (8):** `tool:edit`, `tool:read`, `tool:write`, `tool:glob`, `tool:grep`, `tool:web_fetch`, `tool:web_search`, `mcp-resource-servers`.
 
-## The nine that are not
+## The ten that are not
 
 | Section | File |
 |---|---|
@@ -30,7 +30,8 @@ text: ({ scope }) => ctx.tools.get('read', scope) === undefined
 | `tool:lsp` | `packages/lsp/tool-lsp/src/index.ts` |
 | `tool:session-query` | `packages/session-query/tool-session-query/src/index.ts` |
 | `tool:ralph` | `packages/workflow/tool-ralph/src/index.ts` |
-| `tool:workflow` | `packages/workflow/tool-workflow/src/index.ts` |
+| `tool:${toolName}` | `packages/workflow/tool-workflow/src/index.ts` |
+| `tool:${STRUCTURED_OUTPUT_TOOL}` | `packages/subagent/subagent-in-process-driver/src/structured.ts` |
 
 Shapes vary, but all are unconditional:
 
@@ -62,15 +63,29 @@ tool is missing, renamed, or withheld by policy, so the reasonable move is to tr
 `unknown tool`. That is a wasted call, and the instruction reads as authoritative because it arrives
 in the system prompt.
 
-The cost is bounded and small. The inconsistency is the real complaint: seven sections do this
-correctly and nine do not, so the behaviour depends on which plugin author wrote the section.
+The cost is bounded and small. The inconsistency is the real complaint: eight sections do this
+correctly and ten do not, so the behaviour depends on which plugin author wrote the section.
+
+## Correcting an earlier revision of this report
+
+An earlier version said 21 registrations, 16 tool sections, seven guarded and nine unguarded. Those
+counts came from a search for `ctx.systemPrompt.section({` and silently missed every registration
+made through a different receiver. Nine use another name:
+
+```
+promptCtx  scope  inner  scoped  childCtx  runtimeCtx
+```
+
+Searching for any identifier gives 30 rather than 21, and the unguarded tool sections number ten
+rather than nine. The figure was wrong in the direction that made the defect look smaller, which is
+the direction a hand search fails in.
 
 ## Suggested fix
 
-Adopt the `ctx.tools.get(name, scope) === undefined ? '' : …` pattern in the nine. For `tool:goal`,
+Adopt the `ctx.tools.get(name, scope) === undefined ? '' : …` pattern in the ten. For `tool:goal`,
 keep the config-driven text and wrap it in the scope check.
 
 ## Environment
 
 - DSH `dsh-v0.2.0-rc.2`, commit `639ed0153`
-- Counted by parsing every `ctx.systemPrompt.section({...})` object literal under `packages/`
+- Counted over shipped source, excluding tests and specs

@@ -1,0 +1,42 @@
+{
+  "name": "@l33tdawg/dsh-check-claims",
+  "version": "0.1.0",
+  "description": "check_claims tool for DeepSeek Harness: count a claim against the source, or against a named git revision, instead of checking it by eye.",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "verification",
+    "claims"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "main": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test --experimental-strip-types --test-force-exit \"tests/*.test.ts\""
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

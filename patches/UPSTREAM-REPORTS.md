@@ -61,6 +61,24 @@ The filed example was re-tested against the path the runtime uses, `defineTool` 
 `validateJsonSchemaValue(parameterSchemaSpecToJsonSchema(spec), args, '')`. The report now cites that
 call site and notes that the extra key is *passed through* to the tool body rather than stripped.
 
+### 8637 undercounted a second time, and the tool we built caught it
+
+The "21 registrations, seven guarded, nine unguarded" figure above was itself wrong. It came from
+searching for `ctx.systemPrompt.section({`, which silently misses every registration made through a
+different receiver. Nine use another name:
+
+```
+promptCtx  scope  inner  scoped  childCtx  runtimeCtx
+```
+
+Corrected to **30 registrations, eight guarded, ten unguarded tool sections**.
+
+How it was found is the part worth keeping. `check_claims` was pointed at the claim "`packages/`
+contains 21 of these" and returned 85, because it searched the whole tree including tests and
+matched any receiver. Narrowing to shipped source gave 30. The tool found, in its first hour, an
+error that two rounds of manual review had missed, and it missed it in the direction that made the
+defect look smaller, which is the direction a hand search fails in.
+
 ## Checked and rejected
 
 Two findings from the earlier analysis did not survive verification. Recording them here so they are
