@@ -145,3 +145,18 @@ A session transcript is a **concatenated multi-frame** zstd stream. The session 
 frames must be split on the magic before decompressing, as above. Calling it on the whole file
 returns a 229-byte header and looks like an empty session. (The `/usr/local/bin/zstd` on this
 machine is an x86 binary and fails with `Bad CPU type in executable`, so it cannot be used instead.)
+
+## The `claims` block
+
+Added after four unmeasured assertions reached a public bug report against DSH itself:
+
+- a count stated as "every preset-scoped tool" when 25 of 65 tools were removed
+- a count stated as "three prompt sections" when the real number was nine
+- a citation of `packages/dsh-apply-patch`, a plugin in this repository rather than in the
+  repository the report was filed against
+- a security claim checked against a working tree carrying the reporter's own patch, which would
+  have answered the wrong question for every assertion in it
+
+Each of those was a claim that one command would have settled. The block is deliberately about the
+shape of a claim rather than about any particular subject, so it applies to code, to prose, and to
+reports about a third party.

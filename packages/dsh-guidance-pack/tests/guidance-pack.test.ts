@@ -63,6 +63,7 @@ describe('plugin identity', () => {
       'planning',
       'editing',
       'verification',
+      'claims',
       'destructive',
       'asking',
       'efficiency',
@@ -205,5 +206,29 @@ describe('non-duplication', () => {
     for (const phrase of owned) {
       assert.ok(!text.includes(phrase.toLowerCase()), `guidance must not restate "${phrase}"`)
     }
+  })
+})
+
+describe('the claims block', () => {
+  // Written after four unmeasured assertions reached a public bug report: a
+  // count stated as "every", a count stated as three when it was nine, a path
+  // from the wrong repository, and a claim checked against a patched tree.
+  const claims = BLOCKS.find(block => block.name === 'claims')
+
+  it('exists and covers each failure that motivated it', () => {
+    assert.ok(claims !== undefined, 'the claims block is missing')
+    const text = claims.text
+    // A count must be counted.
+    assert.match(text, /counted in this session/)
+    // An absence must not rest on a search that can silently under-report.
+    assert.match(text, /truncates/)
+    // The subject of a claim must be the thing that was inspected.
+    assert.match(text, /which revision/)
+    // A check must not be able to destroy what it checks.
+    assert.match(text, /alter what it checks/)
+  })
+
+  it('is enabled by default, since it guards every other block', () => {
+    assert.ok(BLOCK_NAMES.includes('claims'))
   })
 })
