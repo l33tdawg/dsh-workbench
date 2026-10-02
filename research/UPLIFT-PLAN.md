@@ -349,9 +349,15 @@ keeping, because both cost me time:
 
 **Reading a DSH session transcript.** The file is a *concatenated multi-frame* zstd stream. 145
 frames in the session measured here. Node's `zstdDecompressSync` silently returns only the first
-frame, so the whole file decompresses to a 229-byte header and looks like an empty session. Split on
-the `28 B5 2F FD` magic and decompress each frame. The `/usr/local/bin/zstd` on this machine is an
-x86 binary and fails with `Bad CPU type in executable`.
+frame, so the whole file decompresses to a 229-byte header and looks like an empty session.
+`tools/session-audit.mjs` exports the answer: `scanFrames(buffer)` walks the frame and block
+structure the way the harness's own `scanZstdFrames` does, and `framesOf(path)` returns each frame's
+span and text. **Do not split on the `28 B5 2F FD` magic instead** — this paragraph recommended that
+until 2026-10-03, when the same shortcut inflated a frame during a log repair: the magic occurs
+inside compressed payloads by chance, a decode from there succeeds and yields plausible text, and
+the frame count still comes out right, so the corruption is invisible. Structure is the only thing
+that distinguishes a frame boundary from four bytes of payload. The `/usr/local/bin/zstd` on this
+machine is an x86 binary and fails with `Bad CPU type in executable`.
 
 **Measuring tool concurrency.** Pair `tool/call` → `tool/result` by `callId` and compare per-step
 wall span against the sum of individual durations. Aggregate over steps, and **break down by tool

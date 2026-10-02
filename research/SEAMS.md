@@ -138,6 +138,18 @@ output is captured nowhere. So 2 is the count of **observed** breaks, not a deno
 "edits that were checked" — if detection failed in some sessions, the true rate is higher and
 nothing in the log would say so.
 
+Reading that as "this is a logging problem" was right, and the obvious fix does not exist. On
+2026-10-02 the plugin began writing one bounded `verify-on-edit/check` event per check attempt, so a
+session log would carry the denominator. It worked at write time and broke the sessions at read
+time: the persistence read path accepts only the harness's own event vocabulary, and an outside type
+is admitted solely when the record carries `ignorable: true`. `Session.append()` takes `type` and
+`data` and nothing else, so a plugin cannot set that marker, and there is no registration surface to
+join the vocabulary instead — `known-event-types` names plugin registration as deferred "until such
+a consumer exists". Nine sessions across four projects stopped loading with `contains event type
+"verify-on-edit/check" ... not marked ignorable; refusing to interpret the log`, and the record was
+removed on 2026-10-03. **A plugin cannot write a durable event of its own type today**, so this
+ambiguity stands until that seam exists.
+
 Even read generously, this does not support building a second detector. The cheaper and more honest
 move is to make the existing one's silence less ambiguous, which is a logging problem, not a
 language-server problem.

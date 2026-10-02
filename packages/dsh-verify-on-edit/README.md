@@ -33,34 +33,18 @@ The edit still counts as a success. The check rides along as context for the nex
 
 ## What it leaves in the log
 
-Silence used to be this plugin's only record, and silence is ambiguous. It says nothing when the check passes, when no check was detected, and when the check could not run at all — so reading a session afterwards, "no problem was reported" could not be told apart from "this plugin never engaged here". A count of reports could not be turned into a rate, because there was no denominator.
+Nothing. The plugin writes no session events, and that is a constraint rather than a design choice.
 
-Every check attempt now appends one bounded `verify-on-edit/check` session event:
+Between 2026-10-02 and 2026-10-03 this plugin appended one bounded `verify-on-edit/check` event per check attempt, carrying an outcome (`clean`, `failed`, `unrelated`, `unparsed`, `no-check`, `unrunnable`) so that its silence afterwards could be read as a result instead of a gap. It worked at write time and broke the sessions at read time: the persistence read path refuses any session containing an event type outside the harness's own vocabulary unless the record carries the envelope's `ignorable` marker, and `Session.append()` takes only `type` and `data`, so a plugin has no way to set it. Nine sessions across four projects stopped loading with
 
-```json
-{ "outcome": "clean", "label": "typecheck", "reported": 0 }
+```
+contains event type "verify-on-edit/check" (seq 7764) unknown to this harness and
+not marked ignorable; refusing to interpret the log
 ```
 
-| `outcome` | Meaning |
-|---|---|
-| `clean` | The check ran and passed. |
-| `failed` | The check ran, failed, and named at least one edited file. |
-| `unrelated` | The check ran and failed, but named only files this session did not edit. |
-| `unparsed` | The check ran and failed, and printed nothing that parsed as a diagnostic. |
-| `no-check` | No check could be detected for this project. |
-| `unrunnable` | The check could not be started, or started and did not exit normally. |
+There is no supported way out from the plugin side. `@deepseek-ai/dsh-session`'s public `append` compiles a plugin-defined event type (the type map is merge-extensible) but the runtime read path validates against a fixed vocabulary and names plugin registration as deferred work. So the record was removed, and the outcomes went with it; `tests/hook.e2e.ts` now asserts the plugin neither appends nor names an event type.
 
-Two of these exist to separate cases that were previously identical. `unparsed` matters because a check that fails and prints something this parser cannot read is not a passing check, and reporting it as one would recreate the ambiguity the record removes. `no-check` is what makes an inert plugin visible: a session whose only records are `no-check` is one where detection found nothing, which is a different problem from a session where every check passed.
-
-The record is not the report. The report goes to the agent and exists only when there is something to report; the record goes to the session log and exists every time the plugin decided to check. It is bounded by the same gate as the check, so a read-only tool call writes nothing at all. Writing one is best-effort — a session that refuses the append must not fail the agent's tool call, and there is a test for exactly that.
-
-Observed live on 2026-10-02 in `session-ee71145b`: the first successful edit after this code was committed produced
-
-```json
-{ "outcome": "clean", "label": "typecheck", "reported": 0 }
-```
-
-at seq 978, written between the `tool/call` that caused it and that call's `tool/result`. That is the whole change in one line: the session previously showed nothing at all at this point, and now it records that the check ran and passed.
+The consequence to know about: a session where every check passed and a session where no check was ever detected still look identical in the log. The message the agent receives remains the only signal, and it exists only when something broke.
 
 ## Configuration
 
@@ -124,7 +108,7 @@ The check runs through `ctx.shell`, so it inherits the session's sandbox and its
 npm test
 ```
 
-105 tests. The parser cases come from the real checkers' output, not from imagination. The gate tests cover the debounce and the attribution filter, including the case that matters most: an error in a file the agent never touched must produce no message. `tests/hook.e2e.ts` drives the real plugin against the actual DSH packages with a fake shell, so the event name, the decision shape, the six outcomes, and the never-break-a-tool-call guarantee are all covered.
+92 tests. The parser cases come from the real checkers' output, not from imagination. The gate tests cover the debounce and the attribution filter, including the case that matters most: an error in a file the agent never touched must produce no message. `tests/hook.e2e.ts` drives the real plugin against the actual DSH packages with a fake shell, so the event name, the decision shape, and the never-break-a-tool-call guarantee are all covered — and so is the absence of a session append, by behaviour and by inspecting the source, because a reintroduced one only fails later, in a different process, when that session is read back.
 
 That file is named `.e2e.ts` rather than `.test.ts`, and until now the test glob only matched `tests/*.test.ts`, so none of it had ever run under `npm test` — it passed when run directly, which is how the gap stayed invisible. The script now matches both patterns.
 

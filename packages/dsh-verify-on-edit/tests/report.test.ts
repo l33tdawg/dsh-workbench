@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import type { CheckPlan } from '../src/detect.ts'
 import { parseDiagnostic } from '../src/parse.ts'
-import { classifyCheck, editedPaths, formatReport, readProjectFile, resolveAgainst, resolveConfig } from '../src/report.ts'
+import { editedPaths, formatReport, readProjectFile, resolveAgainst, resolveConfig } from '../src/report.ts'
 
 describe('resolveConfig', () => {
   it('applies documented defaults', () => {
@@ -196,72 +196,3 @@ describe('formatReport', () => {
   })
 })
 
-// The plugin's silence is the thing under test. Each case below is a situation
-// that used to leave no trace at all, and the point of the outcome is that a
-// session log can tell them apart afterwards.
-describe('classifyCheck', () => {
-  const plan: CheckPlan = { command: 'npm run --silent typecheck', label: 'typecheck', cost: 'fast' }
-  const problem = parseDiagnostic('b.ts(1,1): error TS1: x')!
-
-  it('names a project with no detectable check instead of reporting a pass', () => {
-    assert.deepEqual(classifyCheck(undefined, undefined, 0), { outcome: 'no-check' })
-  })
-
-  it('does not call a check that never ran a clean one', () => {
-    assert.deepEqual(classifyCheck(plan, undefined, 0), { outcome: 'unrunnable', label: 'typecheck' })
-  })
-
-  it('treats a process that did not exit normally as unrunnable', () => {
-    assert.deepEqual(
-      classifyCheck(plan, { exitCode: null, diagnostics: [] }, 0),
-      { outcome: 'unrunnable', label: 'typecheck' },
-    )
-  })
-
-  it('calls a zero exit clean whatever it printed', () => {
-    assert.deepEqual(
-      classifyCheck(plan, { exitCode: 0, diagnostics: [problem] }, 0),
-      { outcome: 'clean', label: 'typecheck', reported: 0 },
-    )
-  })
-
-  // The worst answer available. A check that failed and printed nothing this
-  // parser could read is not a passing check, and calling it one would recreate
-  // the ambiguity this whole record exists to remove.
-  it('separates a failed check that parsed to nothing from a passing one', () => {
-    assert.deepEqual(
-      classifyCheck(plan, { exitCode: 1, diagnostics: [] }, 0),
-      { outcome: 'unparsed', label: 'typecheck', reported: 0 },
-    )
-  })
-
-  it('keeps pre-existing breakage apart from the agent own', () => {
-    const ran = { exitCode: 2, diagnostics: [problem] }
-    assert.deepEqual(classifyCheck(plan, ran, 0), { outcome: 'unrelated', label: 'typecheck', reported: 0 })
-    assert.deepEqual(classifyCheck(plan, ran, 1), { outcome: 'failed', label: 'typecheck', reported: 1 })
-  })
-
-  it('carries the attributed count through to the record', () => {
-    const record = classifyCheck(plan, { exitCode: 1, diagnostics: [problem, problem] }, 2)
-    assert.equal(record.outcome, 'failed')
-    assert.equal(record.reported, 2)
-  })
-
-  // A dead branch here would be an outcome no session could ever record, which
-  // is the same problem in a new place, so every one is reached.
-  it('reaches every declared outcome', () => {
-    const outcomes = [
-      classifyCheck(undefined, undefined, 0),
-      classifyCheck(plan, undefined, 0),
-      classifyCheck(plan, { exitCode: null, diagnostics: [] }, 0),
-      classifyCheck(plan, { exitCode: 0, diagnostics: [] }, 0),
-      classifyCheck(plan, { exitCode: 1, diagnostics: [] }, 0),
-      classifyCheck(plan, { exitCode: 1, diagnostics: [problem] }, 0),
-      classifyCheck(plan, { exitCode: 1, diagnostics: [problem] }, 1),
-    ].map(record => record.outcome)
-    assert.deepEqual(
-      [...new Set(outcomes)].sort(),
-      ['clean', 'failed', 'no-check', 'unparsed', 'unrelated', 'unrunnable'],
-    )
-  })
-})

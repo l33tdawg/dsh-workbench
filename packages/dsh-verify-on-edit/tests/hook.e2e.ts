@@ -75,17 +75,16 @@ function install(output: string, exitCode = 1, config: Config = {}): Harness {
  * repeat-tool-reminder guard does. A fresh object per call would reset the
  * debounce and attribute nothing, so the tests hold one.
  *
- * The fake session also captures `append`, because in a real boot the session is
- * the durable log and the outcome record is the only thing this plugin leaves
- * behind.
+ * The plugin reads only the session's working directory. It does not append:
+ * see the "leaves the session log alone" case below for why.
+ * @param root - the working directory the session reports.
+ * @param session - extra session members, for the cases that need them.
  */
-function agentFor(root: string) {
-  const events: { type: string, data: unknown }[] = []
+function agentFor(root: string, session: Record<string, unknown> = {}) {
   return {
     session: {
       header: { cwd: root },
-      append: (type: string, data: unknown) => { events.push({ type, data }) },
-      events,
+      ...session,
     },
   }
 }
@@ -316,102 +315,35 @@ describe('re-detection', () => {
   })
 })
 
-// Every case below used to be invisible. Silence was the plugin's only record,
-// so a clean session and a session where the plugin never engaged looked the
-// same in the log, and a count of reports could not become a rate.
-describe('the outcome record', () => {
-  /** The events one agent's session captured. */
-  const eventsOf = (agent: ReturnType<typeof agentFor>) => agent.session.events
-
-  it('records a clean run, which used to leave nothing at all', async () => {
+// This plugin once appended a `verify-on-edit/check` record to the session log.
+// `Session.append()` cannot set the envelope's `ignorable` marker, and the
+// persistence read path refuses a session holding an event type outside the
+// harness's vocabulary without it, so nine sessions stopped loading entirely:
+// "contains event type ... unknown to this harness and not marked ignorable".
+// A plugin cannot register an event type either, so the answer is to write
+// nothing, and this is the case that says so.
+describe('leaves the session log alone', () => {
+  it('never appends to the session, on any path through the hook', async () => {
     const root = project()
     dirs.push(root)
-    const harness = install('', 0)
-    const agent = agentFor(root)
-    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.deepEqual(eventsOf(agent), [
-      { type: 'verify-on-edit/check', data: { outcome: 'clean', label: 'typecheck', reported: 0 } },
-    ])
-  })
+    const refuse = () => { throw new Error('the session log must not be written to') }
+    const agent = agentFor(root, { append: refuse, record: refuse })
 
-  it('records a project that declares no check, so inertness is visible', async () => {
-    const bare = mkdtempSync(join(tmpdir(), 'voe-bare-'))
-    dirs.push(bare)
-    writeFileSync(join(bare, 'README.md'), '# hi')
-    const harness = install('src/app.ts(1,1): error TS1: x')
-    const agent = agentFor(bare)
-    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.deepEqual(eventsOf(agent), [
-      { type: 'verify-on-edit/check', data: { outcome: 'no-check' } },
-    ])
-  })
-
-  it('records a reported failure with the count it attributed', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/app.ts(1,1): error TS1: x')
-    const agent = agentFor(root)
-    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.deepEqual(eventsOf(agent), [
-      { type: 'verify-on-edit/check', data: { outcome: 'failed', label: 'typecheck', reported: 1 } },
-    ])
-  })
-
-  // The plugin stays silent here, which is correct for the agent and useless for
-  // anyone reading the log afterwards. The record is what separates "your edit
-  // was clean" from "this project was already red".
-  it('records pre-existing breakage as unrelated rather than as silence', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/unrelated.ts(1,1): error TS1: pre-existing')
-    const agent = agentFor(root)
-    const decision = await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.equal(decision.additionalContexts, undefined)
-    assert.deepEqual(eventsOf(agent), [
-      { type: 'verify-on-edit/check', data: { outcome: 'unrelated', label: 'typecheck', reported: 0 } },
-    ])
-  })
-
-  it('records a check that could not run', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness: Harness = { hook: undefined as never, plans: [], warnings: [] }
-    const ctx = {
-      on: (_event: string, handler: Harness['hook']) => { harness.hook = handler; return () => {} },
-      logger: { warn: (format: string) => { harness.warnings.push(format) } },
-      shell: {
-        resolve: () => { throw new Error('shell exploded') },
-        execute: async () => { throw new Error('unreachable') },
-      },
+    for (const [output, exitCode] of [['src/app.ts(1,1): error TS1: x', 1], ['', 0]] as const) {
+      const harness = install(output, exitCode)
+      const decision = await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
+      assert.equal(decision.kind, 'accept')
     }
-    apply(ctx as never, {})
-    const agent = agentFor(root)
-    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.deepEqual(eventsOf(agent), [
-      { type: 'verify-on-edit/check', data: { outcome: 'unrunnable', label: 'typecheck' } },
-    ])
   })
 
-  // Bounded, and this is what keeps it bounded: the hook fires on every tool
-  // call, and only a call that actually reaches the check may write.
-  it('writes nothing for a call the gate rejected', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/app.ts(1,1): error TS1: x')
-    const agent = agentFor(root)
-    await harness.hook(execFor(agent, 'src/app.ts', 'read'), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.deepEqual(eventsOf(agent), [], 'a read-only call must not append an event')
-  })
-
-  // A session that cannot be written to is not a reason for the agent's edit to
-  // fail. This is the same guarantee the shell failure above gets.
-  it('never breaks a tool call when the session refuses the append', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/app.ts(1,1): error TS1: x')
-    const agent = { session: { header: { cwd: root }, append: () => { throw new Error('read-only session') } } }
-    const decision = await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.equal(decision.kind, 'accept')
-    assert.match(contextText(decision), /typecheck fails/)
+  // Behaviour alone cannot catch this: the append only refuses at read time, in
+  // a later process, so the source is checked too. Comments are stripped first,
+  // because this file's own explanation of the bug names the event.
+  it('neither appends nor names an event type in its source', () => {
+    const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '')
+    assert.deepEqual(source.match(/\.append\b/g) ?? [], [])
+    assert.deepEqual(source.match(/['"][a-z-]+\/[a-z-]+['"]/g) ?? [], ["'tools/post-execute'"])
   })
 })

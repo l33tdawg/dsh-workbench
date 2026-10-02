@@ -151,6 +151,40 @@ Run it before installing the pack. Run it again after a comparable stretch of wo
 pooled rate, the `read-after-edit` share, **and the distribution**: if one session holds most of the
 events, the comparison is between that session and everything else, not between two harnesses.
 
+## Repairing a log the harness refuses
+
+Reading the logs is how the numbers above exist, and it is also how a session can stop opening. The
+harness reads a session back through `@deepseek-ai/dsh-session-persistence`, which refuses a log
+containing an event type outside its own vocabulary unless that record carries `ignorable: true` —
+and `Session.append()` takes only `type` and `data`, so a plugin cannot set that marker. A plugin
+that writes its own event type therefore produces sessions that load until something reads them
+back, and then:
+
+```
+session "session-6579e01f-..." contains event type "verify-on-edit/check" (seq 7764) unknown to
+this harness and not marked ignorable; refusing to interpret the log
+```
+
+`tools/repair-ignorable-events.mjs` marks those records. It is a dry run by default, it re-reads its
+own output through the harness's frame scanner before replacing anything, and it backs up every
+original first:
+
+```sh
+node tools/repair-ignorable-events.mjs                        # every session it would change
+node tools/repair-ignorable-events.mjs --apply --backup-dir /tmp/dsh-backups
+```
+
+Two things about it are worth knowing before it is needed again. **The backup directory is a flag,
+not a default**, because a sandbox that allows writing a session's own file can still refuse to
+create a directory beside it — and a backup step that fails after the point of no return is worse
+than no backup step. And **it rewrites frames, not text**: a session file is a concatenation of
+independently compressed frames, and `tools/session-audit.mjs` finds them by walking the frame and
+block structure, the way the harness does. An earlier version of that walk searched for the zstd
+magic instead and decoded from every hit, which corrupted a 23 MB log during a dry run: the magic
+appears inside compressed payloads, the decode from there succeeds and yields plausible text, and
+the frame count still comes out right. `tools/session-frames.test.mjs` holds a case with an
+incompressible payload containing the magic, which fails on the magic-scanning version.
+
 ## Reading a log back with check_claims
 
 Verifying a claim about the corpus means decompressing a session and counting inside it, which is

@@ -36,7 +36,7 @@
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { zstdDecompressSync } from 'node:zlib'
+import { constants, zstdCompressSync, zstdDecompressSync } from 'node:zlib'
 
 const args = process.argv.slice(2)
 const flag = name => args.includes(name)
@@ -68,31 +68,135 @@ const SINCE = (() => {
   return at
 })()
 
-/** Zstd frames start with this magic; a session file is a concatenation of them. */
-const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
+/** Zstd frames start with this magic, little-endian on disk. */
+const FRAME_MAGIC = 0xfd2fb528
+
+/**
+ * Find every complete frame in a session log, without decompressing.
+ *
+ * A port of the harness's own `scanZstdFrames`
+ * (`dsh-session-persistence-jsonl/lib/worker.cjs`), which walks the frame
+ * header and block structure. Searching for the magic instead — which this tool
+ * did until it corrupted a file — is wrong in a way that hides: a four-byte
+ * magic appears inside compressed payload by chance, and decoding from there
+ * yields plausible-looking text, so the frame count still comes out right while
+ * some frames' text is inflated. Structure is the only thing that tells the two
+ * apart.
+ *
+ * Unlike the harness's copy this one never throws: a byte offset that is not a
+ * frame start is simply not a frame start. A corrupt log therefore reads as
+ * fewer frames rather than as an exception, and `readSession` loses the same
+ * text the harness would have refused to read.
+ *
+ * @param buffer - the whole session file.
+ * @returns complete frame spans, in file order, with any torn tail's start.
+ */
+export function scanFrames(buffer) {
+  const frames = []
+  let offset = 0
+  while (offset < buffer.length) {
+    const start = offset
+    if (buffer.length - offset < 4) return { frames, tornStart: start }
+    if (buffer.readUInt32LE(offset) !== FRAME_MAGIC) {
+      offset += 1
+      continue
+    }
+    offset += 4
+    if (offset === buffer.length) return { frames, tornStart: start }
+    const descriptor = buffer.readUInt8(offset)
+    offset += 1
+    if ((descriptor & 24) !== 0) {
+      offset = start + 1
+      continue
+    }
+    const contentSizeFlag = descriptor >>> 6
+    const singleSegment = (descriptor & 32) !== 0
+    const checksum = (descriptor & 4) !== 0
+    const dictionaryFlag = descriptor & 3
+    const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag
+    const contentSizeBytes = contentSizeFlag === 0 ? (singleSegment ? 1 : 0) : 1 << contentSizeFlag
+    const remainingHeaderBytes = (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes
+    if (buffer.length - offset < remainingHeaderBytes) return { frames, tornStart: start }
+    offset += remainingHeaderBytes
+    let complete = true
+    for (;;) {
+      if (buffer.length - offset < 3) {
+        complete = false
+        break
+      }
+      const blockHeader = buffer.readUIntLE(offset, 3)
+      offset += 3
+      const lastBlock = (blockHeader & 1) !== 0
+      const blockType = (blockHeader >>> 1) & 3
+      const blockSize = blockHeader >>> 3
+      if (blockType === 3) {
+        complete = false
+        break
+      }
+      const payloadBytes = blockType === 1 ? 1 : blockSize
+      if (buffer.length - offset < payloadBytes) {
+        complete = false
+        break
+      }
+      offset += payloadBytes
+      if (lastBlock) break
+    }
+    if (!complete) return { frames, tornStart: start }
+    if (checksum) {
+      if (buffer.length - offset < 4) return { frames, tornStart: start }
+      offset += 4
+    }
+    frames.push({ start, end: offset })
+  }
+  return { frames }
+}
 
 /**
  * Decompress a multi-frame zstd session log.
  *
  * Node's `zstdDecompressSync` returns only the first frame, which for a session
  * is a 200-byte header. That reads as an empty session rather than an error, so
- * the frames are split on the magic explicitly.
+ * the frames are located structurally and decoded one at a time.
  *
  * @param path - the `.jsonl.zstd` file.
  * @returns the decompressed text.
  */
 export function readSession(path) {
-  const buf = readFileSync(path)
-  const parts = []
-  for (let i = 0; i <= buf.length - 4; i++) {
-    if (buf[i] !== MAGIC[0] || buf[i + 1] !== MAGIC[1] || buf[i + 2] !== MAGIC[2] || buf[i + 3] !== MAGIC[3]) continue
-    try {
-      parts.push(zstdDecompressSync(buf.subarray(i)))
-    } catch {
-      // A magic sequence inside compressed payload, not a frame boundary.
-    }
-  }
-  return Buffer.concat(parts).toString('utf8')
+  return framesOf(path).map(frame => frame.text).join('')
+}
+
+/**
+ * Read a session log as its individual zstd frames.
+ *
+ * `readSession` answers "what does this log say", which is enough to count
+ * events. Rewriting one needs the frame boundaries too: a session file is a
+ * concatenation of independently written frames, and a repair has to put back
+ * the frames it did not mean to change byte for byte.
+ *
+ * @param path - the `.jsonl.zstd` file.
+ * @returns one entry per frame, in file order: its span and its decoded text.
+ */
+export function framesOf(path) {
+  const buffer = readFileSync(path)
+  return scanFrames(buffer).frames.map(({ start, end }) => ({
+    offset: start,
+    bytes: buffer.subarray(start, end),
+    text: zstdDecompressSync(buffer.subarray(start, end)).toString('utf8'),
+  }))
+}
+
+/**
+ * One independently compressed frame, ready to append to a session file.
+ *
+ * @param text - the frame's decompressed text.
+ * @returns the frame's bytes.
+ */
+export function frameBytes(text) {
+  // The checksum flag is what the harness writes, so a repaired frame is
+  // structurally the kind of frame the reader already accepts.
+  return zstdCompressSync(Buffer.from(text, 'utf8'), {
+    params: { [constants.ZSTD_c_checksumFlag]: 1 },
+  })
 }
 
 /** Parse a decompressed session into records, dropping anything malformed. */

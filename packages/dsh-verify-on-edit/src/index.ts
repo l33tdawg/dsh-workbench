@@ -19,6 +19,16 @@
  *   any failure inside this plugin is swallowed rather than surfaced as a tool
  *   error. A verification plugin must never be why a tool call fails.
  *
+ * The plugin writes nothing to the session log, and the reason is not a
+ * preference. `Session.append()` accepts only `type` and `data`, so a plugin
+ * cannot set the envelope's `ignorable` marker, and the persistence read path
+ * refuses any session containing an event type outside the harness's own
+ * vocabulary unless that marker is present. An earlier version appended a
+ * `verify-on-edit/check` record here; every session it touched stopped loading
+ * with "contains event type ... unknown to this harness and not marked
+ * ignorable". Until a plugin registers an event type, detection results stay
+ * out of the log.
+ *
  * @module @l33tdawg/dsh-verify-on-edit
  */
 
@@ -29,9 +39,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { detectCheck } from './detect.ts'
 import type { CheckPlan } from './detect.ts'
 import { parseDiagnostics, summarize } from './parse.ts'
-import type { Diagnostic } from './parse.ts'
-import { classifyCheck, formatReport, readProjectFile, relevantDiagnostics, resolveConfig, shouldCheck } from './report.ts'
-import type { CheckRecord, CheckRun, Config } from './report.ts'
+import { formatReport, readProjectFile, relevantDiagnostics, resolveConfig, shouldCheck } from './report.ts'
+import type { CheckRun, Config } from './report.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'verify-on-edit'
@@ -48,17 +57,6 @@ export const inject = ['tools', 'shell']
 
 /** Label for the injected context, so it never renders as a user prompt in derived history. */
 const SOURCE: MessageSource = { kind: 'verify-on-edit' }
-
-/**
- * Session event carrying one check outcome.
- *
- * This is the plugin's only durable trace. `ctx.logger` has no sink in a shipped
- * profile, so a warning about a check that could not run leaves nothing behind,
- * and the report the agent reads exists only when there was something to report.
- * Without this event the plugin's silence is unreadable: a session where every
- * check passed and a session where no check was ever detected look identical.
- */
-export const CHECK_EVENT = 'verify-on-edit/check'
 
 /** Per-session bookkeeping. */
 interface SessionState {
@@ -129,22 +127,6 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
   }
 
-  /**
-   * Append one outcome to the session log.
-   *
-   * Best-effort by construction. This record is how the plugin explains itself
-   * afterwards, and failing to write one must never become a reason a tool call
-   * fails — that would trade an invisible silence for a visible break.
-   */
-  const record = (target: unknown, entry: CheckRecord): void => {
-    try {
-      const session = target as { append?: (type: string, data: unknown) => unknown } | undefined
-      session?.append?.(CHECK_EVENT, entry)
-    } catch (error) {
-      ctx.logger.warn('verify-on-edit: the check outcome could not be recorded: %o', error)
-    }
-  }
-
   ctx.on('tools/post-execute', async (exec, result, next) => {
     const downstream = await next()
     try {
@@ -170,20 +152,13 @@ export function apply(ctx: Context, config: Config = {}): void {
       for (const path of gate.paths) state.edited.add(path)
 
       const plan = planFor(root)
-      if (plan === undefined) {
-        record(agent?.session, classifyCheck(undefined, undefined, 0))
-        return downstream
-      }
+      if (plan === undefined) return downstream
 
       state.lastRun = Date.now()
       const ran = await runCheck(plan, root)
-      if (ran === undefined) {
-        record(agent?.session, classifyCheck(plan, undefined, 0))
-        return downstream
-      }
+      if (ran === undefined) return downstream
 
       const mine = relevantDiagnostics(ran.diagnostics, [...state.edited])
-      record(agent?.session, classifyCheck(plan, ran, mine.length))
       if (mine.length === 0) return downstream
 
       const text = formatReport(plan, summarize(mine, resolved.maxPerFile))
