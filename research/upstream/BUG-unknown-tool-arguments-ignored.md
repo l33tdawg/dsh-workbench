@@ -49,6 +49,20 @@ No `additionalProperties`. The checker at `packages/core/tools/src/json-schema.t
 if (Object.hasOwn(frame.node, 'additionalProperties') && frame.node.additionalProperties === false) {
 ```
 
+That the arguments then reach the tool body unchanged is visible in `defineTool`, `packages/core/tools/src/schema.ts:578-599`:
+
+```ts
+const parameters = parameterSchemaSpecToJsonSchema(options.parameters)
+const validate = (args: unknown): string[] => validateJsonSchemaValue(parameters, args, '')
+// ...
+async execute(args: unknown, exec: ToolRunContext): Promise<JsonValue> {
+  const violations = validate(args)
+  if (violations.length > 0) throw new ToolArgsError(violations)
+  return userExecute(args as InferArgs<S>, exec) as Promise<JsonValue>
+```
+
+Passing, not stripping, is deliberate: the extra key survives into `userExecute`. So the tool receives an object with a property it never declared, and nothing downstream is told.
+
 ## Why it matters
 
 Silent acceptance is the bad half of the trade. A model that passes `run_in_background: true` when the parameter is spelled differently gets a normal result and no signal that the argument went nowhere, so it will make the same call again. Reporting the extra key would turn a silent wrong-result into a loud no-op, which is cheaper to recover from.

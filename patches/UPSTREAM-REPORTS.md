@@ -17,6 +17,50 @@ channel; four of the five most recent discussions there are defect reports.
 
 Each report has a copy in this directory, byte-identical to what was posted.
 
+## Corrections made after filing
+
+Everything below was found by re-checking the reports against the source and the session logs
+*after* posting. All three are now updated upstream.
+
+### 8635 overstated the blast radius
+
+It claimed the session loses "every preset-scoped tool". It does not. Comparing `request/header`
+records either side of the event: **65 tools become 41, so 25 are lost**, and the survivors are the
+35 `mcp__sage__*` tools plus `apply_patch` and four other top-level contributors.
+
+The corrected version lists both sets exactly. The finding is sharper than the original claim: the
+session keeps its MCP servers and loses `read`, `write`, `bash`, `edit`, `grep` and `glob`. It is not
+degraded, it is useless.
+
+`subagent` surviving while `subagent_fork`, `list_agents`, `send_message` and `interrupt_agent`
+vanish is flagged in the report as unexplained. All five come from the same preset rows, so a plain
+scope teardown does not account for it.
+
+### 8635 had an uncontrolled confound
+
+Both occurrences followed a sandbox escalation, which I had not separated from the profile edit. A
+later session provided the control: four escalated commands (git remote, commit, push, rm) with the
+tool count holding at 66 throughout. Escalation is ruled out. That control is now in the report,
+because a cause I had not excluded is the first thing a reader should ask about.
+
+### 8637 undercounted by six
+
+It said three prompt sections render unguarded. Parsing every `ctx.systemPrompt.section({...})`
+object literal under `packages/` gives **21 registrations, 16 of them tool sections, 7 guarded and 9
+not**. Added: `tool:bash`, `tool:pwsh`, `tool:pty`, `tool:lsp`, `tool:session-query` and
+`tool:workflow`.
+
+The original also cited `packages/dsh-apply-patch` as an example of the guard, which is a plugin in
+*this* repository, not theirs. A maintainer searching for it would find nothing. Replaced with the
+seven shipped files that actually do it.
+
+### 8636 was checked and held
+
+The filed example was re-tested against the path the runtime uses, `defineTool` at
+`packages/core/tools/src/schema.ts:578-599`, which is
+`validateJsonSchemaValue(parameterSchemaSpecToJsonSchema(spec), args, '')`. The report now cites that
+call site and notes that the extra key is *passed through* to the tool body rather than stripped.
+
 ## Checked and rejected
 
 Two findings from the earlier analysis did not survive verification. Recording them here so they are
