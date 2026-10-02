@@ -14,8 +14,25 @@ channel; four of the five most recent discussions there are defect reports.
 | [8636](https://github.com/deepseek-ai/deepseek-harness/discussions/8636) | Unknown tool arguments are accepted and silently dropped | medium | yes |
 | [8637](https://github.com/deepseek-ai/deepseek-harness/discussions/8637) | Three prompt sections render for agents without the tools they describe | low | yes |
 | [8638](https://github.com/deepseek-ai/deepseek-harness/discussions/8638) | `isConcurrencySafe` is unset on the shell tools | low | yes |
+| [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649) | The `cordis` preset loses every filesystem skill in Desktop, because its only skill provider points inside `app.asar` | high | yes |
 
 Each report has a copy in this directory, byte-identical to what was posted.
+
+8649 was found while verifying the `cordis` preset in a real session. The preset's two tool rows
+work, which is what made the broken third row worth chasing. The workaround that restores the four
+skills in this profile is [`enable-cordis-skills.md`](enable-cordis-skills.md); it is applied and
+verified live as of 2026-10-02.
+
+## Comments filed
+
+| Discussion | Comment | Filed |
+|---|---|---|
+| [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18713176) | The same archive path also suppresses the model-facing skill catalog, because the watcher's `stat` throws before discovery runs; adds the `standard` vs `cordis` measurement | yes |
+
+The body is [`BUG-REPORT-asar-skill-roots-ADDENDUM.md`](BUG-REPORT-asar-skill-roots-ADDENDUM.md),
+posted with [`post-discussion-comment.mjs`](post-discussion-comment.mjs). It refines 8649 rather than
+replacing it: the report's `discoverRoot` guard is still wanted, and the comment covers the watch
+path plus the publisher's refusal to publish an incomplete snapshot.
 
 ## Corrections made after filing
 
