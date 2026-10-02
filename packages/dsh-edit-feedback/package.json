@@ -1,0 +1,45 @@
+{
+  "name": "@l33tdawg/dsh-edit-feedback",
+  "version": "0.1.0",
+  "description": "Show the agent where its edit landed, by returning the diff DSH already computes instead of only the presentation layer.",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "diff",
+    "edit",
+    "reliability"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "main": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test --experimental-strip-types --test-force-exit \"tests/*.test.ts\""
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh-llm": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

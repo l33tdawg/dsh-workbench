@@ -1,0 +1,19 @@
+# The edit-feedback bundle: return the diff DSH already computes to the model,
+# not only to the UI. Inserted as its own row so a profile can tune or disable it
+# without touching any harness row.
+
+- insert:
+    - id: edit-feedback
+      name: '@l33tdawg/dsh-edit-feedback'
+      config:
+        enabled: true
+        # `str_replace_editor` is deliberately absent: its result is a single
+        # string, so there is no before/after pair to diff.
+        tools: ['edit', 'write', 'apply_patch']
+        # Unchanged lines kept either side of a change.
+        context: 2
+        # Beyond these, hunks and lines are counted and dropped rather than shown.
+        maxHunks: 6
+        maxLines: 60
+        # A minified or generated line is echoed up to here and then clipped.
+        maxLineLength: 400
