@@ -54,6 +54,53 @@ The second time, the only change was one value in `cordis.patch.yml`. Same resul
 
 `--dump-config` composes correctly in both states, and booting a throwaway copy of the same profile activates every entry, so composition is fine and the damage happens only in the live reconcile.
 
+## Mechanism
+
+Traced. `packages/boot/hmr/src/index.ts` watches the profile's patch files and, on a change, calls
+`reconcileProfilePatches`:
+
+```ts
+const patches = readProfilePatches('dsh', profile)
+const warnings = await reconcileProfilePatches(this.ownerContext.root, patches, 'dsh')
+```
+
+`reconcileProfilePatches` resolves the **root** Include entry, the one that mounts the whole
+application (`bootstrapIncludes.set(ctx, entry)` where `entry = loader.resolve(includeId)`), and
+re-applies it:
+
+```ts
+await entry.update({ config: { ...includeConfig, patches: prepared } })
+```
+
+Updating the root entry's config rebuilds the plugin tree beneath it. Plugins mounted at the root
+re-run `apply()`, which is why tools contributed by top-level rows came back. The live agent's own
+scope is not rebuilt, because the agent already exists and nothing recreates it, so every
+registration its preset made into that scope is gone.
+
+That accounts for the observed split precisely: root-contributed tools survived, preset-contributed
+tools did not. It does not explain the one anomaly above, `subagent` surviving while `subagent_fork`,
+`list_agents`, `send_message` and `interrupt_agent` vanished, which suggests `tool-subagent` is also
+mounted at root scope somewhere that I did not chase down.
+
+It also accounts for the silence. `reconcileProfilePatches` does raise on newly introduced activation
+failures:
+
+```ts
+if (introduced.length > 0) throw new Error(activationDiagnostic(binName, introduced).trimEnd())
+```
+
+but nothing failed to activate. Every plugin is healthy. The tree they were mounted into for that
+agent is simply not the tree the agent is still holding.
+
+## Suggested direction
+
+A patch that changes one value in a profile layer should not require rebuilding the whole
+application. The root entry is the wrong granularity, and rebuilding it is what strands live agents.
+
+If the rebuild is unavoidable, then the agents holding scopes from the previous tree need rebuilding
+with it, or the reconcile should refuse and ask for a restart rather than leaving sessions with a
+partial registry and no diagnostic.
+
 ## Workaround
 
 Restart after editing the profile. Do not edit profile files from inside a running session.
