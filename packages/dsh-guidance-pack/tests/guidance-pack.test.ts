@@ -219,13 +219,15 @@ describe('the claims block', () => {
     assert.ok(claims !== undefined, 'the claims block is missing')
     const text = claims.text
     // A count must be counted.
-    assert.match(text, /counted in this session/)
+    assert.match(text, /is not a count/)
     // An absence must not rest on a search that can silently under-report.
     assert.match(text, /truncates/)
     // The subject of a claim must be the thing that was inspected.
     assert.match(text, /which revision/)
     // A check must not be able to destroy what it checks.
     assert.match(text, /alter what it checks/)
+    // An unstated assumption is invisible to the user who has to correct it.
+    assert.match(text, /State the assumption/)
   })
 
   it('is enabled by default, since it guards every other block', () => {

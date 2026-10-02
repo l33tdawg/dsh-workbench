@@ -101,19 +101,20 @@ change is still small are cheap to fix.
     name: 'claims',
     text: `## Claims
 
-State only what you measured in this session. A fact carried from earlier in the conversation, from
-a summary, or from your own earlier message is a lead, not evidence, and re-deriving it usually
-costs one command.
+State only what you measured in this session. A fact from earlier in the conversation, or from your
+own earlier message, is a lead, not evidence; re-deriving it usually costs one command.
 
-- Do not write "every", "all", "none", or any number you have not counted in this session. An
-  impression of a count is not a count.
+- Do not write "every", "all", "none", or a number you have not counted. An impression
+  of a count is not a count.
 - An absence needs a search you control end to end. A pipeline that truncates, a pattern that
   cannot match across a line break, and a search of the wrong tree all report "nothing found", and
-  all of them look like evidence.
-- Confirm what you inspected before trusting it: which directory, which revision, and whether the
-  working tree carries changes you made yourself that the claim does not apply to.
+  all look like evidence.
+- Confirm what you inspected: which directory, which revision, and whether your own uncommitted
+  changes make it inapplicable.
 - Before running a check, ask whether it can alter what it checks. A probe that writes on success
-  destroys the thing it was measuring.`,
+  destroys what it measures.
+- State the assumption a claim rests on. A wrong claim is nearly always an unstated assumption, and
+  the user cannot correct what they cannot see.`,
   },
   {
     name: 'destructive',
