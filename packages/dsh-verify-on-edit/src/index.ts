@@ -80,14 +80,23 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   const shell = (ctx as unknown as { shell?: ShellLike }).shell
   const sessions = new WeakMap<object, SessionState>()
-  const plans = new Map<string, CheckPlan | undefined>()
+  const plans = new Map<string, CheckPlan>()
 
-  /** Cached check plan for a project root; detection reads config files once. */
+  /**
+   * The check plan for a project root.
+   *
+   * A positive result is cached, because a project rarely changes how it wants
+   * to be checked. A negative one is not: caching "no check here" would mean a
+   * project that gains a `typecheck` script mid-session is never checked again,
+   * and the common case for that is an agent adding the script itself. Detection
+   * is six small file reads, and it runs at most once per debounce window.
+   */
   const planFor = (root: string): CheckPlan | undefined => {
-    if (!plans.has(root)) {
-      plans.set(root, detectCheck(relative => readProjectFile(root, relative), resolved.allowSlow))
-    }
-    return plans.get(root)
+    const cached = plans.get(root)
+    if (cached !== undefined) return cached
+    const detected = detectCheck(relative => readProjectFile(root, relative), resolved.allowSlow)
+    if (detected !== undefined) plans.set(root, detected)
+    return detected
   }
 
   /** Run the check. Returns its diagnostics, or `undefined` when it could not run. */

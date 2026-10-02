@@ -27,7 +27,8 @@
     "@deepseek-ai/dsh-mcp-client": "*"
   },
   "scripts": {
-    "test": "node --test --experimental-strip-types --test-force-exit \"tests/*.test.ts\""
+    "test": "node --test --experimental-strip-types --test-force-exit \"tests/*.test.ts\"",
+    "typecheck": "node tools/syntax-check.mjs"
   },
   "dsh": {
     "bundle": {

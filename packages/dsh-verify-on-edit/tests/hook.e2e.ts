@@ -266,3 +266,41 @@ describe('the hook', () => {
     assert.equal(decision.kind, 'accept')
   })
 })
+
+describe('re-detection', () => {
+  // A project that gains a check mid-session must start being checked. The
+  // common case is an agent adding the script itself, and caching the negative
+  // result would make the plugin silently inert for the rest of the session.
+  it('picks up a check that appears after an earlier edit', async () => {
+    const bare = mkdtempSync(join(tmpdir(), 'voe-late-'))
+    dirs.push(bare)
+    writeFileSync(join(bare, 'README.md'), '# no check yet\n')
+
+    const harness = install('src/app.ts(1,1): error TS1: broke it', 1, { debounceMs: 1 })
+    const agent = agentFor(bare)
+
+    // First edit: no check declared, so nothing runs.
+    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
+    assert.deepEqual(harness.plans, [], 'no check should run for a project with none')
+
+    // The project declares one, as an agent adding a script would.
+    writeFileSync(join(bare, 'package.json'), JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' } }))
+    await new Promise(resolve => setTimeout(resolve, 10))
+
+    const decision = await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
+    assert.deepEqual(harness.plans, ['npm run --silent typecheck'], 'the new check must be picked up')
+    assert.match(contextText(decision), /typecheck fails/)
+  })
+
+  it('does not re-read the project once a check is found', async () => {
+    const root = project()
+    dirs.push(root)
+    const harness = install('src/app.ts(1,1): error TS1: x', 1, { debounceMs: 1 })
+    const agent = agentFor(root)
+    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
+    await new Promise(resolve => setTimeout(resolve, 10))
+    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
+    // Both runs execute, but detection happened once and was cached.
+    assert.equal(harness.plans.length, 2)
+  })
+})
