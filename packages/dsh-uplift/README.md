@@ -1,6 +1,6 @@
 # @l33tdawg/dsh-uplift
 
-One install, three fixes for the ways a DSH session makes a capable model look careless.
+One install, five fixes for the ways a DSH session makes a capable model look careless.
 
 ## Install
 
@@ -21,7 +21,7 @@ One install, three fixes for the ways a DSH session makes a capable model look c
 }
 ```
 
-That is the whole change. Each of the three rows can still be disabled or reconfigured alone from a
+That is the whole change. Each of the five rows can still be disabled or reconfigured alone from a
 later profile layer, because they are ordinary loader rows addressed by id.
 
 ## What it mounts
@@ -30,22 +30,29 @@ later profile layer, because they are ordinary loader rows addressed by id.
 |---|---|---|
 | `guidance-pack` | A default DSH prompt carries about 1,750 tokens of per-tool one-liners and no cross-cutting discipline. This adds planning, verification, editing constraints, destructive-action rules, and reporting. | [`dsh-guidance-pack`](../dsh-guidance-pack) |
 | `apply-patch` | Coherent changes across several files currently cost several calls and several confirmations, and there is no multi-file form at all. This adds one, keeping DSH's uniqueness and staleness guarantees. | [`dsh-apply-patch`](../dsh-apply-patch) |
+| `edit-feedback` | An `edit` returns one sentence. The diff is computed and sent to the UI only, so the model reads the file back to find out where its change landed. This returns the diff to the model. | [`dsh-edit-feedback`](../dsh-edit-feedback) |
 | `verify-on-edit` | Nothing checks the agent's work. This runs the project's own check after an edit and reports what broke, while the file is still open. | [`dsh-verify-on-edit`](../dsh-verify-on-edit) |
+| `check-claims` | A count written by eye is wrong in the direction that flatters the author. This turns a countable claim into a command with an exact answer, and can read a named git revision rather than the checkout. | [`dsh-check-claims`](../dsh-check-claims) |
 
-## Why these three
+## Why these five
 
-They were chosen by measuring what actually goes wrong, not by comparing feature lists. Across 36
-recorded sessions and 6,855 tool calls, the largest single source of rework is an agent re-reading a
-file it just edited, at 127 occurrences. That behaviour is rational: nothing tells the agent its edit
-cannot silently misapply, so it checks. The guidance pack states the rule, and `verify-on-edit`
-supplies the feedback that makes checking unnecessary in the first place.
+They were chosen by measuring what actually goes wrong, not by comparing feature lists. Across 46
+recorded sessions and 9,450 tool calls, the largest single source of rework is an agent re-reading a
+file it just edited: 189 of 319 undo-class events, 59% of the total. That behaviour is rational —
+nothing tells the agent its edit cannot silently misapply, so it checks.
+
+The first attempt at that was prompt text in `guidance-pack` telling the agent not to re-read. The
+measurement could not show it working, which is the expected result for the weakest available lever.
+`edit-feedback` is the mechanical version, and `verify-on-edit` supplies the other half: the edit now
+says where it landed, and a broken check says so while the file is still open.
 
 The full baseline and the reasoning are in [`tools/README.md`](../../tools/README.md).
 
 ## Cost
 
-Roughly 1,750 tokens of prompt, one extra tool schema, and one project check per edit burst,
-debounced. Against that, an agent that finds out about its own mistakes while the file is still open.
+Roughly 1,750 tokens of prompt, two extra tool schemas, up to 60 lines of diff per edit, and one
+project check per edit burst, debounced. Against that, an agent that can see where its own edit
+landed and finds out about its own mistakes while the file is still open.
 
 ## What is deliberately not here
 
@@ -62,10 +69,10 @@ debounced. Against that, an agent that finds out about its own mistakes while th
 Each package carries its own suite.
 
 ```sh
-for p in dsh-guidance-pack dsh-apply-patch dsh-verify-on-edit; do
+for p in dsh-guidance-pack dsh-apply-patch dsh-edit-feedback dsh-verify-on-edit dsh-check-claims; do
   (cd ../$p && npm test)
 done
 ```
 
-155 tests across the three, none requiring a harness boot except the `verify-on-edit` hook test,
-which drives the real plugin against the installed DSH packages with a fake shell.
+251 tests across the five. The `edit-feedback` and `verify-on-edit` hook tests drive the real plugin
+against the installed DSH packages with a fake context, so the wiring is covered without a boot.

@@ -1,7 +1,7 @@
 {
   "name": "@l33tdawg/dsh-uplift",
   "version": "0.1.0",
-  "description": "One bundle that installs the DSH reliability pack: behavioural prompt coverage, multi-file atomic patching, and a check that runs after every edit.",
+  "description": "One bundle that installs the DSH reliability pack: behavioural prompt coverage, multi-file atomic patching, a check that runs after every edit, edit feedback, and claim checking.",
   "keywords": [
     "dsh-plugin",
     "deepseek-harness",
@@ -16,9 +16,10 @@
   ],
   "dependencies": {
     "@l33tdawg/dsh-apply-patch": "workspace:*",
+    "@l33tdawg/dsh-check-claims": "workspace:*",
+    "@l33tdawg/dsh-edit-feedback": "workspace:*",
     "@l33tdawg/dsh-guidance-pack": "workspace:*",
-    "@l33tdawg/dsh-verify-on-edit": "workspace:*",
-    "@l33tdawg/dsh-check-claims": "workspace:*"
+    "@l33tdawg/dsh-verify-on-edit": "workspace:*"
   },
   "dsh": {
     "bundle": {

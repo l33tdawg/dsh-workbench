@@ -1,6 +1,6 @@
-# The DSH reliability pack: one bundle, four fixes.
+# The DSH reliability pack: one bundle, five fixes.
 #
-# Install one package and all four rows mount. Each row can still be disabled
+# Install one package and all five rows mount. Each row can still be disabled
 # or reconfigured alone from a later profile layer, because they are ordinary
 # loader rows addressed by id.
 
@@ -19,6 +19,19 @@
     - id: apply-patch
       name: '@l33tdawg/dsh-apply-patch'
       config: {}
+
+    # Return the diff DSH already computes to the model, not only to the UI. The
+    # tool result says where the edit landed, which removes the reason the agent
+    # reads a file back after editing it.
+    - id: edit-feedback
+      name: '@l33tdawg/dsh-edit-feedback'
+      config:
+        enabled: true
+        tools: ['edit', 'write', 'apply_patch']
+        context: 2
+        maxHunks: 6
+        maxLines: 60
+        maxLineLength: 400
 
     # Run the project's own check after an edit and report what the change
     # broke, while the file is still open. This is the one that catches mistakes
