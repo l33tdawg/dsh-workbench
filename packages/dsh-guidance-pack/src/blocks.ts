@@ -78,8 +78,6 @@ what you are about to do and why.`,
   next line plainly does.
 - Never add copyright or license headers unless asked.
 - Avoid one-letter identifiers unless the surrounding code uses them.
-- After an edit succeeds, do not re-read the file to confirm it. The call fails if it did not
-  apply, so re-reading only spends context.
 - For generated files, bulk renames, or the same mechanical change across many files, a script is
   usually better than many individual edits.`,
   },

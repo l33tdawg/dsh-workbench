@@ -73,7 +73,7 @@ that misspells a block should not silently lose the guidance it asked for.
 |---|---|
 | `execution` | Finishing the task; root cause over surface patch; don't fix unrelated bugs; git safety; never revert work you did not author |
 | `planning` | When to use the todo tool; what makes a plan verifiable, with contrasting examples; one step in progress; progress notes |
-| `editing` | ASCII default; comment restraint; no license headers; don't re-read after a successful edit; script bulk changes |
+| `editing` | ASCII default; comment restraint; no license headers; script bulk changes |
 | `verification` | Narrow tests first, then widen; don't add a test framework; formatter policy; never claim an unperformed verification |
 | `destructive` | Resolve and read back the target; never recursive-delete a root or home directory; prefer recoverable operations; use a fresh temp directory |
 | `asking` | Explore before asking; separate discoverable facts from user-owned decisions; offer 2–4 options with a recommendation |
@@ -83,7 +83,7 @@ that misspells a block should not silently lose the guidance it asked for.
 | `review` | Findings first, ordered by severity, with file and line |
 | `frontend` | Deliberate typography, colour, motion, and backgrounds; preserve an existing design system |
 
-**Total: 7,036 characters, about 1,759 tokens.** That roughly doubles the default DSH prompt while
+**Total: 8,456 characters, about 2,114 tokens.** That roughly doubles the default DSH prompt while
 staying at under a quarter of Codex's.
 
 ## What it deliberately does not do

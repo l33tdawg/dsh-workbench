@@ -26,8 +26,12 @@ The prompt-level fix was tried first, in `dsh-guidance-pack`:
 > After a successful edit, do not re-read the file to confirm. The call fails if
 > it did not apply, so re-reading only spends context.
 
-That is the weakest available lever. This plugin is the mechanical one: the tool
-result carries the diff, so there is nothing left to check.
+That was the weakest available lever, and it has since been removed: once this
+plugin was measured at work (read-after-edit 1.4 -> 0.7 per 100 calls across the
+sessions either side of its first delivered diff; the other counters unchanged),
+the prompt line was the redundant half. The quote survives here as a record. This
+plugin is the mechanical one — the tool result carries the diff, so there is
+nothing left to check.
 
 ## What it does
 
