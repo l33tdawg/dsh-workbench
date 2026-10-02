@@ -28,16 +28,65 @@ verified live as of 2026-10-02.
 | Discussion | Comment | Filed |
 |---|---|---|
 | [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18713176) | The same archive path also suppresses the model-facing skill catalog, because the watcher's `stat` throws before discovery runs; adds the `standard` vs `cordis` measurement | yes |
+| [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18715981) | Answer to a comment that attributed the loss to a written `includeDefaultRoots: false`; the field is not written and its schema default is already `true`, so the symptom cannot establish the value | yes |
+| [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18716221) | The absence list swallows `ENOTDIR`, so the archive root cannot be what ends the read; watch and read are two different failures and only the read one produces the registry's "skipped" line; offers a `watch: false` mount as the experiment that separates them | yes |
 
-The body is [`BUG-REPORT-asar-skill-roots-ADDENDUM.md`](BUG-REPORT-asar-skill-roots-ADDENDUM.md),
-posted with [`post-discussion-comment.mjs`](post-discussion-comment.mjs). It refines 8649 rather than
-replacing it: the report's `discoverRoot` guard is still wanted, and the comment covers the watch
-path plus the publisher's refusal to publish an incomplete snapshot.
+The bodies are [`BUG-REPORT-asar-skill-roots-ADDENDUM.md`](BUG-REPORT-asar-skill-roots-ADDENDUM.md),
+[`COMMENT-8649-includeDefaultRoots-default.md`](COMMENT-8649-includeDefaultRoots-default.md) and
+[`COMMENT-8649-absent-errors-and-two-paths.md`](COMMENT-8649-absent-errors-and-two-paths.md),
+posted with [`post-discussion-comment.mjs`](post-discussion-comment.mjs). The first refines 8649
+rather than replacing it: the report's `discoverRoot` guard is still wanted, and the comment covers
+the watch path plus the publisher's refusal to publish an incomplete snapshot. The second answers
+[xiaoshenming's comment](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18715750),
+which read the failure as isolation to a single root and inferred from the symptom that the row
+wrote `includeDefaultRoots: false`. It did not: the field is absent from both presets and the schema
+default is `true`, so the isolation framing is right while the inference from the symptom is not —
+the reason a written `false` and an absent field look identical here is that rank 300 is scanned
+before ranks 100, 200, 400 and 500, and its throw ends the provider's `list()`.
+
+Answering it meant reading the shipped code rather than the npm copy. The Desktop bundle is inside
+`app.asar`, and the archive is a plain file: parse the header at `16`, then read each entry's bytes
+at `16 + headerSize + 2 + offset`, where `headerSize` is the `UInt32LE` at byte 12. The `+ 2` is the
+part that misleads, because the wrong constant still yields a file of exactly the recorded size, one
+that merely starts mid-JSON. `patches/cordis-skills-sync.mjs` derives that offset from the pickle
+header it reads (`8 + headerSize`) and never used the `16 + jsonLength` form its own doc comment
+warns about, so nothing already vendored moved. What the constant is checked against here is the
+archive's per-file `integrity.hash`: the four library bundles compare byte for byte with their
+`node_modules` copies, both presets hash clean, and all 17 files under the preset's `skills/`
+directory hash clean and match `patches/cordis-skills/` exactly.
 
 ## Corrections made after filing
 
 Everything below was found by re-checking the reports against the source and the session logs
-*after* posting. All three are now updated upstream.
+*after* posting. Each is either corrected upstream or, where the correction is a narrowing that a
+maintainer should see, noted in a comment on the same discussion.
+
+### 8649's second comment collapsed two different failures into one
+
+Found while answering a reader on 2026-10-02, and corrected in
+[comment 18716221](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18716221).
+The addendum says the watcher is what marks the observation incomplete. The code cannot support that
+as the only mechanism, because the two paths fail differently and only one of them is visible in the
+registry's log:
+
+| Where | Code | Effect |
+|---|---|---|
+| Watch | `skill-filesystem` `:97`, `observeRoots` in a `try`/`catch` | catch sets `complete = false`; `list()` returns `{ candidates, complete: false }`, no throw reaches the registry |
+| Read | `:103`, the unguarded `discoverRoot` loop | rejection ends `list()` and the provider is skipped, which is the only case that logs `skill provider "filesystem" skipped:` |
+
+The distinction was hiding in the reader's own comment, which pointed at
+`isAbsentSkillPathError` (`:573`, `:576`): the absence class includes `ENOTDIR`, `ENOENT`,
+`FS_NOT_FOUND` and `FS_NOT_DIRECTORY`, and both root-entry readers return `[]` on it (`:624` for the
+file-service path, `:648` for the Node path). A plain Node `ENOTDIR` on the archive root is therefore
+swallowed and the loop continues to ranks 400 and 500. What ends the read is the `TypeError`
+(`Cannot mix BigInt and other types`) this repository measured on the host file service, which is not
+an absence and does propagate.
+
+So the report's discovery-side chain stands and its attribution does not. Which path is at fault is
+now an open question with a named experiment rather than an assertion: mount the provider again with
+`watch: false` (schema default `true` at `:37`, consumed at `:494`) and see whether the throw
+survives. Watching off plus a throw means the read owns it; watching off and no throw means the
+watcher does.
 
 ### 8635 overstated the blast radius
 
