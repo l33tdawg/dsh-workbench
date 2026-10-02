@@ -113,6 +113,45 @@ expose a live view.
 
 ---
 
+## Which seams persist what
+
+Measured 2026-10-02, because plugins here depend on the answer and one of them was written
+specifically to avoid needing it.
+
+| Seam | Does a plugin's contribution reach the durable log? |
+|---|---|
+| `agent/pre-step` | **Yes.** A contributed message is appended as a `user/message` carrying the plugin's own `source.kind`. |
+| `tools/post-execute` | **Yes.** A replaced `content` is the value that gets appended as the `tool/result`. |
+| `tools/post-execute` + `additionalContexts` | **Yes, by a third path.** Spliced into the inbox as `agent/inbox/spliced` (`target: "next-step"`) and landed as a durable `user/message`. |
+| `agent/post-step` | **Does not exist.** |
+
+`agent/pre-step` messages are admitted as the user-message batch the loop appends on the first
+attempt, which is why they survive a resume or a fork instead of living for one step. Measured in
+`session-ee71145b`: a compaction at seq 195, then 13 steps before the next `todo_write` and exactly
+13 reminder records at seq 202–289, one per step. The `todo_write` at seq 292 moved the list and 23
+further steps ran with no reminder at all.
+
+`tools/post-execute` is the same story one layer down: `postExecute` runs before
+`finishScheduledExecution` returns the authoritative result, and that value is what
+`appendToolResult` writes to the log (`dsh-tools/lib/index.js:3368`,
+`dsh-agent-loop/lib/index.js:697`). The `edit` tool's own output is a single sentence —
+`formatEditOutput` returns nothing else (`dsh-tool-fs/lib/index.js:660`) — and the durable record for
+an `edit` in that same session carries that sentence *plus* a unified-diff block that only
+`edit-feedback` produces. The diff is in the log, not merely on screen.
+
+Attached context takes a third route again: `additionalContexts` on a post-execute decision are
+spliced into the agent's inbox and land as a durable `user/message`. That is how `verify-on-edit`'s
+report reaches the model, and both of its corpus firings are in the log that way.
+
+The absent one is the useful negative. There is no `agent/post-step` to hook anywhere: zero
+occurrences of `post-step` under any spelling or case across the installed `@deepseek-ai/dsh` tree
+(288 packages) and inside the 116 MB Electron `app.asar`, against positive controls that find
+`pre-step` in 75 files and `tools/post-execute` in 28, and 153 and 50 occurrences in the bundle.
+Anyone reaching for an "after the step" seam wants `tools/post-execute` for tool results, or
+`step/end` as a log event, not an agent hook.
+
+---
+
 ## What this means for the fork question
 
 The pattern in the three real gaps is the same, and it is not "DSH is broken". It is that **the seams
