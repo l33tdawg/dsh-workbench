@@ -4,3 +4,7 @@ node_modules/
 research/boottest.log
 research/composed-*.yml
 .scratch/
+
+# Python bytecode from patch scripts
+__pycache__/
+*.pyc

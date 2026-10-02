@@ -1,6 +1,6 @@
-# The DSH reliability pack: one bundle, three fixes.
+# The DSH reliability pack: one bundle, four fixes.
 #
-# Install one package and all three rows mount. Each row can still be disabled
+# Install one package and all four rows mount. Each row can still be disabled
 # or reconfigured alone from a later profile layer, because they are ordinary
 # loader rows addressed by id.
 
@@ -32,3 +32,9 @@
         allowSlow: false
         blocking: false
         maxPerFile: 5
+
+    # Count a claim against the source instead of checking it by eye, and read
+    # a named revision when the claim is about one rather than your checkout.
+    - id: check-claims
+      name: '@l33tdawg/dsh-check-claims'
+      config: {}

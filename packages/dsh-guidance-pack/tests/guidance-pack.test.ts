@@ -218,12 +218,13 @@ describe('the claims block', () => {
   it('exists and covers each failure that motivated it', () => {
     assert.ok(claims !== undefined, 'the claims block is missing')
     const text = claims.text
-    // A count must be counted.
-    assert.match(text, /is not a count/)
+    // A count must be run through the tool, which the block names.
+    assert.match(text, /check_claims/)
+    assert.match(text, /is an impression/)
     // An absence must not rest on a search that can silently under-report.
     assert.match(text, /truncates/)
     // The subject of a claim must be the thing that was inspected.
-    assert.match(text, /which revision/)
+    assert.match(text, /for a claim about a revision/)
     // A check must not be able to destroy what it checks.
     assert.match(text, /alter what it checks/)
     // An unstated assumption is invisible to the user who has to correct it.

@@ -17,7 +17,8 @@
   "dependencies": {
     "@l33tdawg/dsh-apply-patch": "workspace:*",
     "@l33tdawg/dsh-guidance-pack": "workspace:*",
-    "@l33tdawg/dsh-verify-on-edit": "workspace:*"
+    "@l33tdawg/dsh-verify-on-edit": "workspace:*",
+    "@l33tdawg/dsh-check-claims": "workspace:*"
   },
   "dsh": {
     "bundle": {
