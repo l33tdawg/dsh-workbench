@@ -112,13 +112,24 @@ information available.
 Codex's prompt forbids this explicitly: *"Do not waste tokens by re-reading files after calling
 `apply_patch` on them. The tool call will fail if it didn't work."* DSH says nothing.
 
-The guidance pack added for this work carries that exact rule, in its `editing` block:
-
-> After a successful edit, do not re-read the file to confirm it. The call fails if it did not
-> apply, so re-reading only spends context.
-
-So the prediction is specific and falsifiable: **installing the pack should cut `read-after-edit`
+The guidance pack added for this work used to carry that exact rule in its `editing` block, which
+made the prediction specific and falsifiable: **installing the pack should cut `read-after-edit`
 substantially**, and that cut should be visible in this number and in nothing else.
+
+**Measured on 2026-10-02, and the rule has now been removed.** The split is not an activation time
+anyone recorded but the first edit result the plugin itself wrote: session `e7ad4e0f` seq 332 at
+`2026-10-02 16:47:33` local, which is eight minutes *earlier* than the "~16:55" this file used to
+give. Sixteen sessions that started before it hold 3,192 calls and 44 `read-after-edit` events, a
+rate of **1.4 per 100 calls**; thirteen that started after hold 3,455 calls and 23, or **0.7**.
+`rework` was 19 in both windows and `repeat-call` and `retry-after-fail` were 0 in both, which is
+the "and in nothing else" half of the prediction holding too.
+
+So the mechanical fix does the work and the prompt line was redundant, which is why the pack no
+longer carries it — the quote above lives in this file and in `dsh-edit-feedback`'s README, not in
+the prompt. The hedge worth stating: 23 events across 13 sessions is a thin corpus, and this tool
+has already shown that one session can carry a whole measurement, so treat the halving as
+suggestive rather than settled. Re-run it after a comparable stretch before leaning on the size of
+the effect.
 
 ## How to use it
 
@@ -151,7 +162,15 @@ that in an ordinary working session — the one behind this section was 4.7 MB.
 
 It fails safe, which is the part to lean on: above the bound it reports *"examined no files at this
 path, so there is nothing to count"* as **undecided**, never as zero. An `[UNKNOWN]` verdict means
-the bound, not an absence. Slice first:
+the bound, not an absence.
+
+That held only while the oversized file was the *only* candidate, which is why the first version of
+this section was wrong. Scanning a directory, the oversized file was skipped and the scan still
+called itself complete, so a small neighbour made `expect: 0` **pass** while the pattern sat in the
+file nobody had read. Fixed on 2026-10-02: a size skip now sets `incomplete` and names the skipped
+files in the reason, so the verdict is `UNKNOWN`. An `[UNKNOWN]` is always safe to read as the bound;
+a `PASS` never covers a file over the bound, so check what the scan actually read. Slice first
+regardless:
 
 ```sh
 tail -n 300 session.jsonl > tail.jsonl    # 1.5 MB, scanned normally
