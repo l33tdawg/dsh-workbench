@@ -1,0 +1,34 @@
+# The DSH reliability pack: one bundle, three fixes.
+#
+# Install one package and all three rows mount. Each row can still be disabled
+# or reconfigured alone from a later profile layer, because they are ordinary
+# loader rows addressed by id.
+
+- insert:
+    # Behavioural prompt coverage. DSH's assembled prompt is about 1,750 tokens
+    # of per-tool one-liners; this adds the cross-cutting discipline it lacks.
+    - id: guidance-pack
+      name: '@l33tdawg/dsh-guidance-pack'
+      config:
+        blocks: []
+        order: 100
+        extra: ''
+
+    # Multi-file atomic patching, with Codex's expressiveness and DSH's edit
+    # guarantees. Sits beside `edit` rather than replacing it.
+    - id: apply-patch
+      name: '@l33tdawg/dsh-apply-patch'
+      config: {}
+
+    # Run the project's own check after an edit and report what the change
+    # broke, while the file is still open. This is the one that catches mistakes
+    # the model would otherwise ship.
+    - id: verify-on-edit
+      name: '@l33tdawg/dsh-verify-on-edit'
+      config:
+        enabled: true
+        timeoutMs: 60000
+        debounceMs: 3000
+        allowSlow: false
+        blocking: false
+        maxPerFile: 5

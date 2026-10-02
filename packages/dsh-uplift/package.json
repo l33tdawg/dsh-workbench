@@ -1,0 +1,27 @@
+{
+  "name": "@l33tdawg/dsh-uplift",
+  "version": "0.1.0",
+  "description": "One bundle that installs the DSH reliability pack: behavioural prompt coverage, multi-file atomic patching, and a check that runs after every edit.",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "bundle",
+    "reliability"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dependencies": {
+    "@l33tdawg/dsh-apply-patch": "workspace:*",
+    "@l33tdawg/dsh-guidance-pack": "workspace:*",
+    "@l33tdawg/dsh-verify-on-edit": "workspace:*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

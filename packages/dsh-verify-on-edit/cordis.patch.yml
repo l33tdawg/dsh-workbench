@@ -1,0 +1,19 @@
+# The verify-on-edit bundle: run the project's own check after a file changes
+# and tell the agent what its edit broke. Inserted as its own row so a profile
+# can tune or disable it without touching any harness row.
+
+- insert:
+    - id: verify-on-edit
+      name: '@l33tdawg/dsh-verify-on-edit'
+      config:
+        enabled: true
+        # Hard limit for one check. A check that hangs must not hold the turn.
+        timeoutMs: 60000
+        # One check per window, so a burst of edits in one turn costs one run.
+        debounceMs: 3000
+        # `test`-class scripts are slow and often already red, so they are opt-in.
+        allowSlow: false
+        # Off: a multi-file refactor is legitimately broken between steps.
+        # Turn on to make a failed check fail the edit that caused it.
+        blocking: false
+        maxPerFile: 5

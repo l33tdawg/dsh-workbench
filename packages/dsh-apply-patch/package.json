@@ -1,0 +1,44 @@
+{
+  "name": "@l33tdawg/dsh-apply-patch",
+  "version": "0.1.0",
+  "description": "Multi-file atomic apply_patch tool for DeepSeek Harness: one call, many hunks, all-or-nothing, with Codex's patch format and DSH's edit guarantees.",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "apply-patch",
+    "editing"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "main": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test --experimental-strip-types --test-force-exit \"tests/*.test.ts\""
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-fs": "*",
+    "@deepseek-ai/dsh-tool-fs": "*",
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-fs": { "optional": true },
+    "@deepseek-ai/dsh-tool-fs": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

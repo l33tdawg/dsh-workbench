@@ -1,0 +1,7 @@
+# The apply-patch bundle: one multi-file patch tool. Inserted as its own row
+# beside the harness's `edit` tool, which it complements rather than replaces.
+
+- insert:
+    - id: apply-patch
+      name: '@l33tdawg/dsh-apply-patch'
+      config: {}

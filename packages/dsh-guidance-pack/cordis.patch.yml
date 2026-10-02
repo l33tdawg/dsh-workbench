@@ -1,0 +1,16 @@
+# The guidance-pack bundle: one system-prompt section of cross-cutting
+# behavioural guidance. Inserted as its own row so a profile can disable it,
+# retarget it, or override `blocks` without restating any harness row.
+
+- insert:
+    - id: guidance-pack
+      name: '@l33tdawg/dsh-guidance-pack'
+      config:
+        # Empty means every block. Name a subset to trim the pack, e.g.
+        # [ 'planning', 'verification' ].
+        blocks: []
+        # Prompt order. 100 places the pack after the deployment persona (0)
+        # and before plan-mode policy (500), so it reads as general engineering
+        # discipline before mode-specific rules.
+        order: 100
+        extra: ''
