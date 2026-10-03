@@ -1,6 +1,6 @@
 # @l33tdawg/dsh-uplift
 
-One install, five fixes for the ways a DSH session makes a capable model look careless.
+One install for guidance, safer edits, verification before completion, and task continuity.
 
 ## Install
 
@@ -21,7 +21,7 @@ One install, five fixes for the ways a DSH session makes a capable model look ca
 }
 ```
 
-That is the whole change. Each of the five rows can still be disabled or reconfigured alone from a
+Each row can still be disabled or reconfigured alone from a
 later profile layer, because they are ordinary loader rows addressed by id.
 
 ## What it mounts
@@ -31,10 +31,11 @@ later profile layer, because they are ordinary loader rows addressed by id.
 | `guidance-pack` | A default DSH prompt carries about 1,750 tokens of per-tool one-liners and no cross-cutting discipline. This adds planning, verification, editing constraints, destructive-action rules, and reporting. | [`dsh-guidance-pack`](../dsh-guidance-pack) |
 | `apply-patch` | Coherent changes across several files currently cost several calls and several confirmations, and there is no multi-file form at all. This adds one, keeping DSH's uniqueness and staleness guarantees. | [`dsh-apply-patch`](../dsh-apply-patch) |
 | `edit-feedback` | An `edit` returns one sentence. The diff is computed and sent to the UI only, so the model reads the file back to find out where its change landed. This returns the diff to the model. | [`dsh-edit-feedback`](../dsh-edit-feedback) |
-| `verify-on-edit` | Nothing checks the agent's work. This runs the project's own check after an edit and reports what broke, while the file is still open. | [`dsh-verify-on-edit`](../dsh-verify-on-edit) |
+| `verify-on-edit` | Records every edit, checks pending edits before completion, reports explicit check outcomes and permits one bounded corrective continuation. | [`dsh-verify-on-edit`](../dsh-verify-on-edit) |
 | `check-claims` | A count written by eye is wrong in the direction that flatters the author. This turns a countable claim into a command with an exact answer, and can read a named git revision rather than the checkout. | [`dsh-check-claims`](../dsh-check-claims) |
+| `compaction-todo` | Restores saved task state once after a compaction. Enables `workflow_context` for a bounded objective, constraints, decisions and remaining checks. | [`dsh-compaction-todo`](../dsh-compaction-todo) |
 
-## Why these five
+## Why these changes
 
 They were chosen by measuring what actually goes wrong, not by comparing feature lists. Across 46
 recorded sessions and 9,450 tool calls, the largest single source of rework is an agent re-reading a
@@ -46,13 +47,18 @@ measurement could not show it working, which is the expected result for the weak
 `edit-feedback` is the mechanical version, and `verify-on-edit` supplies the other half: the edit now
 says where it landed, and a broken check says so while the file is still open.
 
-The full baseline and the reasoning are in [`tools/README.md`](../../tools/README.md).
+The original baseline and reasoning are in [`tools/README.md`](../../tools/README.md).
+The current regression cases and measurement protocol are in
+[`research/RELIABILITY-EVAL.md`](../../research/RELIABILITY-EVAL.md). The verification loop now
+retains edits skipped by debounce; a passing earlier check cannot cover a later edit by accident.
 
 ## Cost
 
-Roughly 1,750 tokens of prompt, two extra tool schemas, up to 60 lines of diff per edit, and one
-project check per edit burst, debounced. Against that, an agent that can see where its own edit
-landed and finds out about its own mistakes while the file is still open.
+The bundle adds the guidance prompt, three tool schemas, bounded edit diffs and verification
+notices. Checks are debounced during work, with a final check when edits remain pending at a normal
+completion boundary. The completion guard can request at most one additional step per turn; it
+does not promise that the model will resolve every failure. Saved workflow context is model-authored
+task data and grants no new authority.
 
 ## What is deliberately not here
 
@@ -61,7 +67,8 @@ landed and finds out about its own mistakes while the file is still open.
   installation, so it is a deliberate choice. See
   [`patches/enable-harness-introspection.md`](../../patches/enable-harness-introspection.md).
 - **The network fence.** That one is a harness-level change and cannot be a plugin, because a plugin
-  cannot add a syscall boundary. It is applied and reported upstream.
+  cannot add a syscall boundary. A source patch exists and was reported upstream; that is not
+  evidence of protection in the installed desktop runtime.
 - **Auto-review.** Already built and shipped disabled; enabling it is a profile change.
 
 ## Tests
@@ -69,10 +76,15 @@ landed and finds out about its own mistakes while the file is still open.
 Each package carries its own suite.
 
 ```sh
-for p in dsh-guidance-pack dsh-apply-patch dsh-edit-feedback dsh-verify-on-edit dsh-check-claims; do
+for p in dsh-guidance-pack dsh-apply-patch dsh-edit-feedback dsh-verify-on-edit dsh-check-claims dsh-compaction-todo; do
   (cd ../$p && npm test)
 done
 ```
 
-281 tests across the five. The `edit-feedback` and `verify-on-edit` hook tests drive the real plugin
-against the installed DSH packages with a fake context, so the wiring is covered without a boot.
+The hook suites drive the actual plugins against installed DSH message APIs with fake contexts and
+shells. They cover deferred final edits, failure reporting, bounded completion and compaction
+recovery. A separate local census reads supported session records without uploading transcripts:
+
+```sh
+node ../../tools/reliability-census.mjs --json
+```

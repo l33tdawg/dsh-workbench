@@ -1,10 +1,9 @@
 /**
  * Parse compiler and linter output into diagnostics with a file path.
  *
- * The point of parsing rather than dumping raw output is attribution. A check
- * run reports every problem in the project, most of which the agent did not
- * cause and must not touch. Only a diagnostic that names a file the agent just
- * edited is worth interrupting it for, and finding that requires the path.
+ * Located diagnostics let the report prioritize edited files while keeping
+ * failures in untouched consumers visible. Paths alone do not establish which
+ * changes caused a failure.
  *
  * Four shapes cover the checkers worth supporting:
  *

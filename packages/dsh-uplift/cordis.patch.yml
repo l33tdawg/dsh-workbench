@@ -1,6 +1,6 @@
-# The DSH reliability pack: one bundle, five fixes.
+# The DSH reliability pack.
 #
-# Install one package and all five rows mount. Each row can still be disabled
+# Install one package and all rows mount. Each row can still be disabled
 # or reconfigured alone from a later profile layer, because they are ordinary
 # loader rows addressed by id.
 
@@ -51,3 +51,10 @@
     - id: check-claims
       name: '@l33tdawg/dsh-check-claims'
       config: {}
+
+    # Restore task state once after each compaction; workflow_context keeps a
+    # bounded, model-authored objective, constraints, decisions and check list.
+    - id: compaction-todo
+      name: '@l33tdawg/dsh-compaction-todo'
+      config:
+        workflowContext: true

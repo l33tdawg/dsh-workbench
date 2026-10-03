@@ -21,6 +21,12 @@ describe('resolveConfig', () => {
     })
   })
 
+  it('validates an explicit project check instead of guessing an empty command', () => {
+    assert.throws(() => resolveConfig({ command: '  ' }), /command must be a non-empty string/)
+    assert.throws(() => resolveConfig({ command: 'pnpm test', label: '' }), /label must be a non-empty string/)
+    assert.equal(resolveConfig({ command: 'pnpm check' }).label, 'project check')
+  })
+
   it('keeps explicit values', () => {
     assert.equal(resolveConfig({ timeoutMs: 5_000, blocking: true, maxPerFile: 2 }).timeoutMs, 5_000)
     assert.equal(resolveConfig({ blocking: true }).blocking, true)
@@ -162,7 +168,7 @@ describe('formatReport', () => {
       items: [parseDiagnostic('src/a.ts(12,5): error TS2322: bad type')!],
       omitted: 0,
     }])
-    assert.match(text, /typecheck fails on 1 problem/)
+    assert.match(text, /typecheck failed with 1 reported problem/)
     assert.match(text, /src\/a\.ts:12 {2}TS2322: bad type/)
   })
 
@@ -171,7 +177,7 @@ describe('formatReport', () => {
       { file: 'a.ts', items: [parseDiagnostic('a.ts(1,1): error TS1: x')!], omitted: 0 },
       { file: 'b.ts', items: [parseDiagnostic('b.ts(1,1): error TS1: x')!], omitted: 0 },
     ])
-    assert.match(two, /fails on 2 problems in files you edited/)
+    assert.match(two, /failed with 2 reported problems/)
   })
 
   it('reports omitted counts', () => {
@@ -181,9 +187,9 @@ describe('formatReport', () => {
 
   // The closing instruction is load-bearing: without it the agent treats
   // pre-existing failures as its own and goes off to fix them.
-  it('tells the agent not to fix files it did not edit', () => {
+  it('states missing baseline and warns against unrelated repairs', () => {
     const text = formatReport(plan, [{ file: 'a.ts', items: [], omitted: 1 }])
-    assert.match(text, /Leave failures in files you have not edited alone/)
+    assert.match(text, /No pre-edit baseline was captured/)
   })
 
   it('omits a line number when the checker gave none', () => {

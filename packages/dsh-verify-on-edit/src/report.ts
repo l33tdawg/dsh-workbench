@@ -27,6 +27,15 @@ export const MUTATING_TOOL_NAMES: readonly string[] = [
   'str_replace_editor',
 ]
 
+/** Only the editor commands implemented as writes count as mutations. */
+export function mutatesFiles(toolName: string, args: unknown): boolean {
+  if (!MUTATING_TOOL_NAMES.includes(toolName)) return false
+  if (toolName !== 'str_replace_editor') return true
+  if (typeof args !== 'object' || args === null) return false
+  const command = (args as { command?: unknown }).command
+  return typeof command === 'string' && ['create', 'str_replace', 'insert'].includes(command)
+}
+
 /** Plugin configuration. */
 export interface Config {
   /** Whether the check runs at all. */
@@ -41,6 +50,10 @@ export interface Config {
   blocking?: boolean
   /** Maximum diagnostics shown per file. */
   maxPerFile?: number
+  /** Explicit project check, run in the session workspace through the shell service. */
+  command?: string
+  /** Human-readable name for the explicit check. */
+  label?: string
 }
 
 /** Resolved configuration with every default applied. */
@@ -51,6 +64,8 @@ export interface ResolvedConfig {
   allowSlow: boolean
   blocking: boolean
   maxPerFile: number
+  command?: string
+  label?: string
 }
 
 /**
@@ -70,7 +85,14 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
     }
     return value
   }
+  if (config.command !== undefined && (typeof config.command !== 'string' || config.command.trim() === '')) {
+    throw new Error('verify-on-edit: command must be a non-empty string')
+  }
+  if (config.label !== undefined && (typeof config.label !== 'string' || config.label.trim() === '')) {
+    throw new Error('verify-on-edit: label must be a non-empty string')
+  }
   return {
+    ...(config.command === undefined ? {} : { command: config.command, label: config.label ?? 'project check' }),
     enabled: config.enabled ?? true,
     timeoutMs: positive(config.timeoutMs, 60_000, 'timeoutMs'),
     debounceMs: positive(config.debounceMs, 3_000, 'debounceMs'),
@@ -227,7 +249,7 @@ export function shouldCheck(
   if (!config.enabled) return { check: false, paths: [], reason: 'disabled' }
   if (input.isError) return { check: false, paths: [], reason: 'the tool call failed' }
   if (!input.hasAgent) return { check: false, paths: [], reason: 'no agent' }
-  if (!MUTATING_TOOL_NAMES.includes(input.toolName)) {
+  if (!mutatesFiles(input.toolName, input.args)) {
     return { check: false, paths: [], reason: `${input.toolName} does not modify files` }
   }
   const paths = editedPaths(input.toolName, input.args, input.resultValue)
@@ -242,9 +264,8 @@ export function shouldCheck(
 /**
  * Filter a check's output down to what the agent is responsible for.
  *
- * Errors only, and only in files this session edited. Warnings are excluded
- * because they are usually pre-existing, and unrelated files are excluded
- * because an agent handed someone else's breakage will go and fix it.
+ * Errors in edited files come first. Errors in other files remain visible:
+ * changed interfaces can break consumers the agent never edited.
  *
  * @param diagnostics - every parsed diagnostic from the run.
  * @param edited - paths this session has edited.
@@ -254,7 +275,10 @@ export function relevantDiagnostics(
   diagnostics: readonly Diagnostic[],
   edited: readonly string[],
 ): Diagnostic[] {
-  return diagnostics.filter(diagnostic => isError(diagnostic) && concernsEditedFile(diagnostic, edited))
+  // Untouched consumers can fail because an edited module changed its API.
+  // Put edited files first, but never infer causation from the path alone.
+  return diagnostics.filter(isError).sort((a, b) =>
+    Number(concernsEditedFile(b, edited)) - Number(concernsEditedFile(a, edited)))
 }
 
 /**
@@ -282,8 +306,7 @@ export function formatReport(plan: CheckPlan, groups: readonly ReportGroup[]): s
   const total = groups.reduce((sum, group) => sum + group.items.length + group.omitted, 0)
   const plural = total === 1 ? '' : 's'
   const lines = [
-    `[verify-on-edit] ${plan.label} fails on ${total} problem${plural} in `
-    + `${groups.length === 1 ? 'a file' : 'files'} you edited.`,
+    `[verify-on-edit] ${plan.label} failed with ${total} reported problem${plural}.`,
     '',
   ]
   for (const group of groups) {
@@ -295,8 +318,19 @@ export function formatReport(plan: CheckPlan, groups: readonly ReportGroup[]): s
   }
   lines.push(
     '',
-    'Fix these before moving on, or say why they are expected. Leave failures in files you have '
-    + 'not edited alone: they predate your change.',
+    'No pre-edit baseline was captured, so these failures are not attributed to your changes. '
+    + 'Untouched files may be affected consumers. Investigate relevant failures; do not broaden the task to unrelated repairs.',
   )
   return lines.join('\n')
+}
+
+/** Settled check state; absence of diagnostics never means a failed check passed. */
+export interface VerificationOutcome {
+  readonly status: 'passed' | 'failed' | 'timed-out' | 'unavailable' | 'no-check' | 'unparsed' | 'cancelled'
+  readonly summary: string
+  readonly edited: readonly string[]
+  /** A newer edit arrived while this check ran, or cancellation left it unchecked. */
+  readonly pending?: boolean
+  /** The outcome has not yet been contributed to the model context. */
+  readonly fresh?: boolean
 }

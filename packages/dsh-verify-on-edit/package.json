@@ -1,7 +1,7 @@
 {
   "name": "@l33tdawg/dsh-verify-on-edit",
-  "version": "0.1.0",
-  "description": "Run a project's own check after an edit and tell the agent what its change broke, while the file is still open.",
+  "version": "0.2.0",
+  "description": "Track edits, run project checks through the session shell policy, and report verification before completion.",
   "keywords": [
     "dsh-plugin",
     "deepseek-harness",
@@ -32,8 +32,12 @@
     "@deepseek-ai/dsh-tools": "*"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-llm": { "optional": true },
-    "@deepseek-ai/dsh-tools": { "optional": true }
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
   },
   "dsh": {
     "bundle": {

@@ -1,55 +1,101 @@
 # `@l33tdawg/dsh-compaction-todo`
 
-Put the todo list back into the model's context after a compaction.
+Recover recorded task state after compaction, once per boundary. Version 0.2.0
+uses the delivered message in the session log to avoid repeated reminders after
+reload, resume, or fork.
 
-## What breaks
+## What it does
 
-`todo_write` keeps its list in the durable session log: the tool appends
-`todo/write` and registers a `todos` session projection, so the plan survives on
-disk. Compaction then replaces the model's context window with a summary, and the
-summary does not carry the list. The tool result the model was working from is
-gone, no read-back tool exists, and the agent continues without its plan. That is
-"the agent misses things" by construction rather than by model failure, and it is
-the last unbuilt item of the four in [`research/SCORECARD.md`](../../research/SCORECARD.md).
+Before the next model step, the plugin reads the newest `todo/write` and
+`compaction/end`. If compaction removed a nonempty list from context, it returns
+a reminder through the supported `agent/pre-step` message hook. The harness
+persists that message as an ordinary `user/message`.
 
-## What this does
+The reminder records its compaction boundary and the revisions it delivered in
+`source.continuity`. The next step checks that receipt and stays quiet. A later
+compaction makes the state eligible again. A newer todo write supersedes the
+old one; an empty write clears it. Failed or cancelled compaction attempts are
+not new boundaries. Delivery is not marked in process memory, so
+an interrupted contribution that never reached the log can be retried.
 
-Two listeners, no new tool:
+The log is authoritative. Both the `eventAt(index)` session API and the installed
+`events` snapshot API are supported. No custom session event type is written.
 
-- `session/event` mirrors the newest `todo/write` per session. A todo list is one
-  record whose later writes replace earlier ones, so the newest write is the
-  whole list.
-- `agent/pre-step` notices when the newest `compaction/end` is newer than the
-  newest `todo/write`, and appends a `<system-reminder>` carrying the list.
+## Optional workflow context
 
-The log is the authority, not plugin memory. The mirror is only a cache, so a
-write this process missed cannot make the injection wrong: the next step re-reads
-the log. The reminder repeats on each step until the agent writes again. That
-repeat began as a hedge: whether a message contributed at `agent/pre-step` is
-durable or single-step was not documented, and a reminder that survives one step
-is close to useless. The first live run settled it in favour of durability (see
-[Verification](#verification)). The repeat is kept anyway, because it costs one
-bounded block per step and leaves the plugin not depending on that finding.
+The standalone default remains todo-only. Set `workflowContext: true` to expose
+`workflow_context` and recover an existing goal's recorded objective and phase.
+The plugin does not create, resume, or complete goals.
 
-Four properties keep it honest:
+```yaml
+- id: compaction-todo
+  config:
+    workflowContext: true
+```
 
-- **It never invents a plan.** The list is replayed verbatim from the newest
-  `todo/write`, or nothing is injected.
-- **The newest write wins, including an empty one.** An agent that clears its
-  list has finished; reminding it about nothing is noise.
-- **A compaction older than the newest write is not a reason to remind.** The
-  agent has written its plan since, so that plan is already in context.
-- **Todo text cannot forge the frame.** `<` and `>` are escaped, so a todo
-  containing `</system-reminder>` cannot close the block early.
+`workflow_context` replaces a small explicit snapshot:
+
+```json
+{
+  "objective": "Repair the parser without changing its public API",
+  "constraints": ["Preserve existing input compatibility"],
+  "decisions": ["Extend the existing parser"],
+  "remainingVerification": ["Run parser regressions"]
+}
+```
+
+All four fields are required. The objective is at most 1,000 characters; each
+list holds at most eight entries of at most 400 characters each. The full
+snapshot must fit within 6,000 JSON characters. An empty objective and three empty
+lists clear the snapshot. Invalid or failed calls leave the last successful
+snapshot intact.
+
+The snapshot is model-authored working context. It is never treated as a human
+instruction, approval, or verified fact. Recalled text states this explicitly,
+uses `form: recall`, and remains subordinate to current instructions. There is
+no parsing of free-form conversation to guess constraints, decisions, or goals.
+The existing goal record remains a separate source, including paused, blocked,
+and complete phases.
+
+The tool's normal result carries the snapshot both as JSON text and as supported
+`tool/result.meta`. Replay requires a successful canonical result, matching
+rendered content, and its earlier `workflow_context` call with matching
+arguments. A user message quoting a checkpoint, unrelated tool metadata, or a
+failed call does not count. Both the Desktop's flat tool-result message and the
+installed library's nested `tool-result` content block are recognized, with the
+same success, call identity, metadata, and exact-text checks.
+
+## Delivery and limits
+
+Every reminder is a known `user/message` with:
+
+```json
+{
+  "kind": "compaction-todo",
+  "form": "recall",
+  "continuity": {
+    "version": 1,
+    "compactedAt": 195,
+    "todoRevision": 142,
+    "workflowRevision": null,
+    "goalRevision": null
+  }
+}
+```
+
+Revision values are event sequence numbers; `null` means that source was not
+included. Only delivered parts are acknowledged. Legacy reminders with the old
+source kind are recognized by their position after the boundary, so upgrading
+an existing session does not repeat an already-delivered todo reminder.
+
+Todo recalls include at most 32 entries and 400 characters per entry, and goal
+objectives at most 1,000 characters. The complete rendered recall is capped at
+12,000 characters after escaping. Truncation is stated, and the durable records
+retain the full state. This is a compact recovery aid, not a second transcript.
 
 ## Install
 
-```sh
-# from a session with Full access, or with approval
-plugin_manager install_bundle /absolute/path/to/packages/dsh-compaction-todo
-```
-
-Or add the row by hand in a profile patch layer:
+Install this package as a normal DSH bundle. Its row is independently configurable:
 
 ```yaml
 - insert:
@@ -58,61 +104,26 @@ Or add the row by hand in a profile patch layer:
       config: {}
 ```
 
+The uplift bundle can enable the optional workflow tool on the same row. Avoid
+inserting a second row for a package already mounted by the bundle.
+
 ## Verification
 
+```sh
+npm test
 ```
-node --test --experimental-strip-types --test-force-exit "tests/*.test.ts"
-```
 
-17 tests over the log-reading half: which write wins, what an unreadable record
-does, when a reminder is owed, and how the list renders. Two of them exist
-because the first draft failed them: a todo carrying `</system-reminder>` could
-close the frame, and ordinary text containing `<` was being left unescaped.
+Tests exercise log selection plus the actual Cordis loader, tool registry,
+immutable message constructors, session writer, and seeded session replay.
+Both root development dependencies and the installed `dsh-base` dependency
+family are exercised, covering their different session and message layouts.
+They cover thirteen steps producing one reminder, another compaction producing
+a second, reload/resume/fork, undelivered contributions, later and empty todo
+writes, checkpoint replacement/clearing, bounds, malformed metadata, source
+identity, and existing goal phases. All plugin output uses known event types.
 
-The tests cover the log-reading half only. The listener imports the harness's
-message constructor, which resolves only inside an installation, so delivery is
-not reachable from a unit test.
-
-## Delivery, measured
-
-**The reminder has been delivered by a running DSH.** First live run
-2026-10-02, in session `session-ee71145b`, on a `/compact` issued as
-`cmd-9aa96fc7-1`. From the session log alone:
-
-| record | seq |
-| --- | --- |
-| `compaction/start` | 191 |
-| `compaction/summary` | 193 |
-| `compaction/end` | 195 |
-| newest `todo/write` (4 items) | 142 |
-| `step/start`, the first after the compaction | 199 |
-| durable reminder for that step | 202 |
-| `step/start`, the next step | 212 |
-| durable reminder for that step | 213 |
-
-Each reminder is a `user/message` whose `data.source.kind` is `compaction-todo`
-and whose `surfaceOp` is `append`, carrying text byte-identical to what
-`renderReminder` produces.
-
-The run then continued, and the repeat behaved as designed in both directions.
-The compaction stayed at seq 195 while the newest write stayed at seq 142, so the
-condition kept holding and **13 reminders were written, one per step, for the 13
-steps between the compaction and the next write** (seq 202 through 289). A
-`todo_write` at seq 292 then moved the list, and the reminders stopped: 23 further
-steps ran in that session and not one carried a reminder, so no reminder has a
-seq above 292. Re-injecting until the list moves is therefore the measured live
-behaviour and not only a hedge — it repeats while the compaction is newer than the
-list, and goes quiet the moment the list moves.
-
-This also settles the assumption the plugin was written to avoid depending on:
-**a message a plugin contributes at `agent/pre-step` is durable in the session
-log**, not single-step. That is a property of the harness rather than of this
-plugin, so it is worth knowing for any future injection at the same seam.
-
-One earlier claim in this file was wrong and is withdrawn. A firing does not
-leave "a log line, not a visible marker": the plugin does log
-`compaction-todo: re-injected N todo(s) after compaction at seq X`, but host
-logger output is not written anywhere a live session can be inspected for it —
-there is no log file and no log record type in the session log containing it.
-The trace that does exist is the durable message, which is stronger evidence
-than the log line would have been: it proves delivery, not merely the decision.
+The older implementation was observed delivering thirteen durable reminders
+between one compaction and the next todo update in a live session on 2026-10-02.
+That observation established that pre-step messages survive on disk. Version
+0.2.0 fixes the resulting repetition; its new behavior is integration-tested,
+but has not yet been verified in a running desktop session.

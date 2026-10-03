@@ -1,6 +1,6 @@
 {
   "name": "@l33tdawg/dsh-guidance-pack",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Behavioural prompt guidance for DeepSeek Harness: planning, verification, editing, and reporting discipline the base harness prompt does not ship.",
   "keywords": [
     "dsh-plugin",

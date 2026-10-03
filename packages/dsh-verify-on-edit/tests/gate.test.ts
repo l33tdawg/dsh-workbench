@@ -56,6 +56,17 @@ describe('shouldCheck', () => {
     }
   })
 
+  it('treats editor view as a read while retaining supported mutations', () => {
+    for (const command of ['view', 'undo_edit', undefined]) {
+      const gate = shouldCheck(edit({ toolName: 'str_replace_editor', args: { command, path: 'src/A.ts' }, resultValue: { path: 'src/A.ts' } }), 0, CONFIG, 10000)
+      assert.equal(gate.check, false)
+      assert.deepEqual(gate.paths, [])
+    }
+    for (const command of ['create', 'str_replace', 'insert']) {
+      assert.equal(shouldCheck(edit({ toolName: 'str_replace_editor', args: { command, path: 'src/A.ts' } }), 0, CONFIG, 10000).check, true)
+    }
+  })
+
   it('skips a direct execute with no agent', () => {
     assert.equal(shouldCheck(edit({ hasAgent: false }), 0, CONFIG, 10_000).reason, 'no agent')
   })
@@ -92,9 +103,9 @@ describe('relevantDiagnostics', () => {
 
   // The single most important filter. An agent handed a pre-existing failure
   // will go and fix it, which is exactly what it was told not to do.
-  it('drops an error in a file the agent never touched', () => {
+  it('keeps an error in an untouched consumer', () => {
     const found = parseDiagnostics('src/other.ts(1,1): error TS1: pre-existing')
-    assert.deepEqual(relevantDiagnostics(found, edited), [])
+    assert.equal(relevantDiagnostics(found, edited).length, 1)
   })
 
   it('drops warnings even in an edited file', () => {
@@ -102,19 +113,19 @@ describe('relevantDiagnostics', () => {
     assert.deepEqual(relevantDiagnostics(found, edited), [])
   })
 
-  it('keeps only the attributable subset of a mixed run', () => {
+  it('prioritizes edited files without discarding other errors', () => {
     const found = parseDiagnostics([
       'src/other.ts(1,1): error TS1: theirs',
       'src/app.ts(4,2): error TS2: mine',
       'src/app.ts(9,1): warning TS6133: noise',
     ].join('\n'))
     const kept = relevantDiagnostics(found, edited)
-    assert.equal(kept.length, 1)
+    assert.equal(kept.length, 2)
     assert.equal(kept[0].message, 'TS2: mine')
   })
 
-  it('returns nothing when the session has edited nothing', () => {
+  it('does not invent attribution when no edited paths match', () => {
     const found = parseDiagnostics('src/app.ts(1,1): error TS1: boom')
-    assert.deepEqual(relevantDiagnostics(found, []), [])
+    assert.equal(relevantDiagnostics(found, []).length, 1)
   })
 })

@@ -1,5 +1,13 @@
 # The case, and the number
 
+## Current reliability census
+
+`node tools/reliability-census.mjs --json` reads standard session records and reports explicit
+verification outcomes, pending-work signals, approvals and duplicate compaction reminders. It
+does not infer a pass from silence. Use fresh sessions and the protocol in
+[`research/RELIABILITY-EVAL.md`](../research/RELIABILITY-EVAL.md) for comparisons; the historical
+observations below use a different, broader read-after-edit heuristic.
+
 ## The claim
 
 A harness decides how capable a model looks. Two agents running the same weights can differ by more

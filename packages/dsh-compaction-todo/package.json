@@ -1,7 +1,7 @@
 {
   "name": "@l33tdawg/dsh-compaction-todo",
-  "version": "0.1.0",
-  "description": "Put the todo list back into the model's context after a compaction, replayed from the durable session log rather than from plugin memory.",
+  "version": "0.2.0",
+  "description": "Recover task state once per compaction from durable delivery receipts, with optional structured workflow notes.",
   "keywords": [
     "dsh-plugin",
     "deepseek-harness",
@@ -27,10 +27,14 @@
     "test": "node --test --experimental-strip-types --test-force-exit \"tests/*.test.ts\""
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": "*"
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-tools": "*"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
       "optional": true
     }
   },

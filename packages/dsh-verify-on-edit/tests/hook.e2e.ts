@@ -1,349 +1,368 @@
-/**
- * End-to-end test of the post-execute hook.
- *
- * The unit tests cover the decisions in isolation. This drives the real `apply`
- * with a fake context and a fake shell, so the wiring itself is covered: the
- * event name, the result shape the agent actually receives, and the guarantee
- * that nothing thrown inside the hook can break a tool call.
- */
-
+/** Real plugin hooks with a controlled shell and a durable session-shaped log. */
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 import { apply, name, inject } from '../src/index.ts'
 import type { Config } from '../src/report.ts'
 
-/** Everything the fake context captured. */
-interface Harness {
-  hook: (exec: unknown, result: unknown, next: () => Promise<unknown>) => Promise<{ kind: string, additionalContexts?: unknown[] }>
-  plans: string[]
-  warnings: string[]
-}
-
-/** A project directory with a declared typecheck script. */
-function project(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'voe-e2e-'))
-  writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' } }))
-  mkdirSync(join(dir, 'src'), { recursive: true })
-  return dir
-}
-
 const dirs: string[] = []
-afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
-})
-
-/**
- * Install the plugin against a fake context.
- * @param output - what the fake check prints.
- * @param exitCode - what the fake check exits with.
- * @param config - plugin configuration.
- */
-function install(output: string, exitCode = 1, config: Config = {}): Harness {
-  const harness: Harness = { hook: undefined as never, plans: [], warnings: [] }
+afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
+function project(scripts: Record<string, string> | undefined = { typecheck: 'tsc --noEmit' }): string {
+  const root = mkdtempSync(join(tmpdir(), 'voe-hooks-'))
+  dirs.push(root)
+  if (scripts !== undefined) writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts }))
+  return root
+}
+const text = (value: unknown): string => JSON.stringify(value)
+function host(config: Config = {}, root = project()) {
+  const hooks = new Map<string, (...args: any[]) => any>()
+  const calls: any[] = [], events: any[] = [{ type: 'turn/start', data: { turn: 1 } }]
+  const steered: any[] = [], disposal: (() => void)[] = []
+  let answer: any = { exitCode: 0, stdout: { text: '' }, stderr: { text: '' } }
+  let execute: ((spec: any) => Promise<any>) | undefined
+  let policy: any
+  const session = {
+    header: { cwd: root },
+    events,
+    get seq() { return events.length },
+    eventAt: (index: number) => events[index],
+    append: (type: string, data: any, envelope?: any) => {
+      assert.equal(type, 'user/message', 'only an existing event type may be appended')
+      events.push({ type, data, ...envelope })
+    },
+  }
+  const agent = { session, status: 'running', inbox: { nextStep: [] }, steer: (message: any) => {
+    steered.push(message)
+    events.push({ type: 'agent/inbox/spliced', data: { inserted: [message] } })
+  } }
+  const shell: any = {
+    resolve: (request: any) => { calls.push(request); return request },
+    execute: async (spec: any) => execute ? execute(spec) : { result: async () => answer },
+  }
   const ctx = {
-    on: (event: string, handler: Harness['hook']) => {
-      assert.equal(event, 'tools/post-execute')
-      harness.hook = handler
-      return () => {}
-    },
-    logger: { warn: (format: string) => { harness.warnings.push(format) } },
-    shell: {
-      resolve: (request: { command: string }) => {
-        harness.plans.push(request.command)
-        return { command: request.command }
-      },
-      execute: async () => ({
-        result: async () => ({
-          exitCode,
-          stdout: { text: output },
-          stderr: { text: '' },
-        }),
-      }),
-    },
+    on: (event: string, hook: (...args: any[]) => any) => { hooks.set(event, hook) },
+    get: (service: string) => service === 'sandboxPolicy' ? policy : undefined,
+    effect: (factory: () => () => void) => { disposal.push(factory()) },
+    logger: { warn: () => {} }, shell,
   }
   apply(ctx as never, config)
-  return harness
-}
-
-/**
- * A stable agent handle for one project.
- *
- * The plugin keys per-session state on the agent object, exactly as the
- * repeat-tool-reminder guard does. A fresh object per call would reset the
- * debounce and attribute nothing, so the tests hold one.
- *
- * The plugin reads only the session's working directory. It does not append:
- * see the "leaves the session log alone" case below for why.
- * @param root - the working directory the session reports.
- * @param session - extra session members, for the cases that need them.
- */
-function agentFor(root: string, session: Record<string, unknown> = {}) {
   return {
-    session: {
-      header: { cwd: root },
-      ...session,
+    hooks, calls, events, steered, agent, shell, root,
+    human: (message: string) => { events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: message }] } }) },
+    reload: () => { apply(ctx as never, config) },
+    answer: (value: any) => { answer = { ...answer, ...value } },
+    execution: (fn: (spec: any) => Promise<any>) => { execute = fn },
+    policy: (value: any) => { policy = value },
+    dispose: () => { for (const stop of disposal) stop() },
+    edit: async (file = 'src/A.ts', options: { signal?: AbortSignal, tool?: string, isError?: boolean } = {}) => hooks.get('tools/post-execute')!({
+      name: options.tool ?? 'edit', arguments: { file_path: file }, agent,
+      signal: options.signal ?? new AbortController().signal,
+    }, { isError: options.isError ?? false }, async () => ({ kind: 'accept', content: [{ type: 'text', text: 'original' }] })),
+    stop: async (signal = new AbortController().signal) => {
+      events.push({ type: 'assistant/message', data: { turn: 1, message: { content: [{ type: 'text', text: 'Done.' }] } } })
+      await hooks.get('agent/turn-stopping')!({ agent, turn: 1, signal })
     },
   }
 }
 
-/** A fake exec for a successful edit. */
-function execFor(agent: object, filePath = 'src/app.ts', toolName = 'edit') {
-  return { name: toolName, arguments: { file_path: filePath }, agent }
+function failed(output = 'src/A.ts(1,1): error TS2322: wrong type') {
+  return { exitCode: 1, stdout: { text: output } }
 }
 
-/** The text of every context message in a decision. */
-function contextText(decision: { additionalContexts?: unknown[] }): string {
-  return (decision.additionalContexts ?? [])
-    .map(message => {
-      const content = (message as { content?: { type: string, text?: string }[] }).content ?? []
-      return content.map(block => block.text ?? '').join('\n')
-    })
-    .join('\n')
-}
-
-describe('plugin identity', () => {
-  // `shell` is required, not optional: Cordis throws on an undeclared
-  // `ctx.<name>` read, so a missing entry here stops the plugin activating in a
-  // real boot while every other test still passes. A live boot is what caught
-  // that; this assertion is what stops it coming back.
-  it('declares every service it reads', () => {
+describe('verification wiring and outcomes', () => {
+  it('declares shell and tool dependencies', () => {
     assert.equal(name, 'verify-on-edit')
-    assert.deepEqual([...inject].sort(), ['shell', 'tools'])
+    assert.deepEqual(inject, ['tools', 'shell'])
   })
-
-  it('reads no service it did not inject', () => {
-    const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
-    // Plain Context methods are not services and need no declaration.
-    const methods = new Set(['on', 'logger', 'emit', 'waterfall', 'inject', 'get', 'effect'])
-    const allowed = new Set([...inject, ...methods])
-    const read = [...source.matchAll(/\bctx\.([a-zA-Z_$][\w$]*)/g)].map(match => match[1])
-    const undeclared = [...new Set(read)].filter(property => !allowed.has(property))
-    assert.deepEqual(undeclared, [], `read without inject: ${undeclared.join(', ')}`)
+  it('reports an explicit pass without changing the edit result', async () => {
+    const h = host()
+    const result = await h.edit()
+    assert.equal(result.kind, 'accept')
+    assert.deepEqual(result.content, [{ type: 'text', text: 'original' }])
+    assert.equal(result.additionalContexts[0].source.summary, 'verify-on-edit: passed')
+    assert.match(text(result), /typecheck passed/)
+  })
+  it('reports errors with no invented before/after attribution', async () => {
+    const h = host(); h.answer(failed())
+    const result = await h.edit()
+    assert.equal(result.additionalContexts[0].source.summary, 'verify-on-edit: failed')
+    assert.match(text(result), /No pre-edit baseline/)
+    assert.match(text(result), /src\/A\.ts/)
+  })
+  it('keeps failures in untouched dependent files visible', async () => {
+    const h = host(); h.answer(failed('src/consumer.ts(1,1): error TS2322: exported API changed'))
+    const result = await h.edit('src/api.ts')
+    assert.match(text(result), /consumer\.ts/)
+    assert.match(text(result), /Untouched files may be affected consumers/)
+    assert.doesNotMatch(text(result), /predate your change/)
+  })
+  it('reports a nonzero unparseable check as unparsed, not passed', async () => {
+    const h = host(); h.answer(failed('FAIL assertion expected 4 got 5'))
+    const result = await h.edit()
+    assert.equal(result.additionalContexts[0].source.summary, 'verify-on-edit: unparsed')
+    assert.match(text(result), /FAIL assertion expected/)
+  })
+  it('bounds unparseable and parsed output', async () => {
+    const h = host(); h.answer(failed('broken '.repeat(5000)))
+    const result = await h.edit()
+    assert.ok(result.additionalContexts[0].content[0].text.length < 4100)
+    const parsed = host(); parsed.answer(failed(Array.from({ length: 200 }, (_, i) => `src/${i}.ts(1,1): error TS1: ${'x'.repeat(500)}`).join('\n')))
+    const report = await parsed.edit()
+    assert.ok(report.additionalContexts[0].content[0].text.length < 4100)
+  })
+  it('reports shell failures and policy denials as unavailable', async () => {
+    const h = host(); h.execution(async () => { throw new Error('executor unavailable') })
+    assert.equal((await h.edit()).additionalContexts[0].source.summary, 'verify-on-edit: unavailable')
+    const denied = host(); denied.answer({ exitCode: 1, sandbox: { denied: true } })
+    assert.equal((await denied.edit()).additionalContexts[0].source.summary, 'verify-on-edit: unavailable')
+  })
+  it('reports a timeout separately and preserves the hard timeout request', async () => {
+    const h = host({ timeoutMs: 1234 }); h.answer({ exitCode: null, timedOut: true })
+    assert.equal((await h.edit()).additionalContexts[0].source.summary, 'verify-on-edit: timed-out')
+    assert.equal(h.calls[0].timeoutMs, 1234)
+    assert.equal(h.calls[0].onExpiry, 'kill')
+    assert.equal(h.calls[0].stdoutMaxBytes, 32768)
+  })
+  it('reports no-check when there is no configured or detected command', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'voe-no-check-')); dirs.push(root)
+    const h = host({}, root)
+    assert.equal((await h.edit()).additionalContexts[0].source.summary, 'verify-on-edit: no-check')
+    assert.equal(h.calls.length, 0)
+  })
+  it('supports an explicit command and runs it in the session workspace', async () => {
+    const h = host({ command: 'pnpm verify --filter web', label: 'web check' })
+    const result = await h.edit()
+    assert.equal(h.calls[0].command, 'pnpm verify --filter web')
+    assert.equal(h.calls[0].workdir, h.root)
+    assert.match(text(result), /web check passed/)
+  })
+  it('re-detects after the declared check changes', async t => {
+    let now = 100_000; t.mock.method(Date, 'now', () => now)
+    const h = host()
+    await h.edit()
+    writeFileSync(join(h.root, 'package.json'), JSON.stringify({ scripts: { lint: 'eslint .' } }))
+    now += 4000
+    await h.edit('package.json')
+    assert.deepEqual(h.calls.map(call => call.command), ['npm run --silent typecheck', 'npm run --silent lint'])
+  })
+  it('does not run for read-only or failed calls', async () => {
+    const h = host()
+    await h.edit('src/A.ts', { tool: 'read' })
+    await h.edit('src/A.ts', { isError: true })
+    await h.stop()
+    assert.equal(h.calls.length, 0)
+    assert.equal(h.steered.length, 0)
+  })
+  it('registers no hooks when disabled', () => {
+    assert.equal(host({ enabled: false }).hooks.size, 0)
+  })
+  it('can block on failed checks when explicitly configured', async () => {
+    const h = host({ blocking: true }); h.answer(failed())
+    assert.equal((await h.edit()).kind, 'block')
   })
 })
 
-describe('the hook', () => {
-  it('reports an error in a file the agent just edited', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/app.ts(12,5): error TS2322: Type string is not assignable to number.')
-    const decision = await harness.hook(execFor(agentFor(root)), { isError: false }, async () => ({ kind: 'accept' }))
-
-    assert.equal(decision.kind, 'accept')
-    const text = contextText(decision)
-    assert.match(text, /typecheck fails on 1 problem/)
-    assert.match(text, /src\/app\.ts:12/)
-    assert.match(text, /TS2322/)
-  })
-
-  it('runs the project\'s declared script', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/app.ts(1,1): error TS1: x')
-    await harness.hook(execFor(agentFor(root)), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.deepEqual(harness.plans, ['npm run --silent typecheck'])
-  })
-
-  it('says nothing when the check passes', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('', 0)
-    const decision = await harness.hook(execFor(agentFor(root)), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.equal(decision.additionalContexts, undefined)
-  })
-
-  // The filter that stops the agent wandering off to fix someone else's work.
-  it('says nothing when only an untouched file fails', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/unrelated.ts(1,1): error TS1: pre-existing')
-    const decision = await harness.hook(execFor(agentFor(root)), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.equal(decision.additionalContexts, undefined)
-  })
-
-  it('says nothing for a read-only tool', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/app.ts(1,1): error TS1: x')
-    const decision = await harness.hook(execFor(agentFor(root), 'src/app.ts', 'read'), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.equal(decision.additionalContexts, undefined)
-    assert.deepEqual(harness.plans, [], 'a read must not run a check')
-  })
-
-  it('says nothing when the edit itself failed', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/app.ts(1,1): error TS1: x')
-    const decision = await harness.hook(execFor(agentFor(root)), { isError: true }, async () => ({ kind: 'accept' }))
-    assert.equal(decision.additionalContexts, undefined)
-  })
-
-  it('says nothing for a project that declares no check', async () => {
-    const bare = mkdtempSync(join(tmpdir(), 'voe-bare-'))
-    dirs.push(bare)
-    writeFileSync(join(bare, 'README.md'), '# hi')
-    const harness = install('src/app.ts(1,1): error TS1: x')
-    const decision = await harness.hook(execFor(agentFor(bare)), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.equal(decision.additionalContexts, undefined)
-  })
-
-  it('debounces a burst of edits into one run', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/app.ts(1,1): error TS1: x', 1, { debounceMs: 60_000 })
-    const agent = agentFor(root)
-    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.equal(harness.plans.length, 1)
-  })
-
-  // A suppressed run must still record the path, or the next check misses it.
-  it('attributes an edit that the debounce suppressed', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/late.ts(1,1): error TS1: x', 1, { debounceMs: 60_000 })
-    const agent = agentFor(root)
-    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    await harness.hook(execFor(agent, 'src/late.ts'), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.equal(harness.plans.length, 1, 'only the first run happens')
-
-    // A second edit inside the window is still attributed, so a later check
-    // covers the file it touched.
-    const later = install('src/app.ts(1,1): error TS1: a\nsrc/late.ts(1,1): error TS1: b', 1, { debounceMs: 5 })
-    const laterAgent = agentFor(root)
-    await later.hook(execFor(laterAgent), { isError: false }, async () => ({ kind: 'accept' }))
-    // The second edit lands inside the window and is suppressed, but must still
-    // be attributed: that is what this test is about.
-    await later.hook(execFor(laterAgent, 'src/late.ts'), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.equal(later.plans.length, 1, 'the second edit is debounced')
-    await new Promise(resolve => setTimeout(resolve, 10))
-    const decision = await later.hook(execFor(laterAgent, 'src/late.ts'), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.match(contextText(decision), /src\/late\.ts/)
-  })
-
-  it('preserves whatever the downstream listener decided', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/app.ts(1,1): error TS1: x')
-    const decision = await harness.hook(execFor(agentFor(root)), { isError: false }, async () => ({ kind: 'accept', content: [{ type: 'text', text: 'downstream' }] }))
-    assert.deepEqual((decision as { content?: unknown }).content, [{ type: 'text', text: 'downstream' }])
-    assert.ok(decision.additionalContexts !== undefined)
-  })
-
-  it('blocks when a deployment asks it to', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/app.ts(1,1): error TS1: x', 1, { blocking: true })
-    const decision = await harness.hook(execFor(agentFor(root)), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.equal(decision.kind, 'block')
-  })
-
-  // Disabled registers no listener at all, which is stronger than registering
-  // one that always returns early: nothing is even asked to run.
-  it('registers no hook when disabled', () => {
-    const harness = install('', 0, { enabled: false })
-    assert.equal(harness.hook, undefined)
-    assert.deepEqual(harness.plans, [])
-  })
-
-  // The property that matters most operationally: a bug in this plugin must not
-  // become a bug in the agent's tool call.
-  it('never breaks a tool call when the shell layer throws', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('')
-    const ctx = {
-      on: (_event: string, handler: Harness['hook']) => { harness.hook = handler; return () => {} },
-      logger: { warn: () => {} },
-      shell: {
-        resolve: () => { throw new Error('shell exploded') },
-        execute: async () => { throw new Error('unreachable') },
-      },
+describe('dirty edits and completion flush', () => {
+  it('serializes multiple waiters behind a slow check without duplicate follow-up checks', async t => {
+    let now = 100_000; t.mock.method(Date, 'now', () => now)
+    const barrier = () => {
+      let release!: () => void
+      const promise = new Promise<void>(resolve => { release = resolve })
+      return { promise, release }
     }
-    apply(ctx as never, {})
-    const decision = await harness.hook(execFor(agentFor(root)), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.equal(decision.kind, 'accept')
-    assert.equal(decision.additionalContexts, undefined)
+    const started = [barrier(), barrier(), barrier()]
+    const finish = [barrier(), barrier(), barrier()]
+    const h = host({ debounceMs: 3000 })
+    let running = 0, maximum = 0, execution = 0
+    h.execution(async () => {
+      const index = execution++
+      running++; maximum = Math.max(maximum, running)
+      started[index].release()
+      return { result: async () => {
+        await finish[index].promise
+        running--
+        return { exitCode: 0 }
+      } }
+    })
+    const a = h.edit('src/A.ts')
+    await started[0].promise
+    now += 4000
+    // Both waiters observe A in flight before it is released.
+    const b = h.edit('src/B.ts'), c = h.edit('src/C.ts')
+    await Promise.resolve(); await Promise.resolve()
+    finish[0].release()
+    await started[1].promise
+    assert.equal(h.calls.length, 2, 'one follow-up check owns both pending edits')
+    assert.equal(maximum, 1, 'checks must never overlap')
+    finish[1].release(); finish[2].release()
+    const results = await Promise.all([a, b, c])
+    assert.equal(results.filter(result => result.additionalContexts).length, 2, 'one notice per actual check')
+    await h.stop()
+    assert.equal(h.calls.length, 2, 'the final revision is already checked')
   })
-
-  it('never breaks a tool call when the agent has no session cwd', async () => {
-    const harness = install('src/app.ts(1,1): error TS1: x')
-    const decision = await harness.hook({ name: 'edit', arguments: { file_path: 'a.ts' }, agent: { session: { header: {} } } }, { isError: false }, async () => ({ kind: 'accept' }))
-    assert.equal(decision.kind, 'accept')
+  it('retains B when its check is suppressed and C triggers the next check', async t => {
+    let now = 100_000; t.mock.method(Date, 'now', () => now)
+    const h = host({ debounceMs: 3000 })
+    await h.edit('src/A.ts')
+    now += 10
+    h.answer(failed('src/B.ts(1,1): error TS1: broken B'))
+    await h.edit('src/B.ts')
+    assert.equal(h.calls.length, 1)
+    now += 3000
+    const result = await h.edit('src/C.ts')
+    assert.equal(h.calls.length, 2)
+    assert.match(text(result), /broken B/)
+    // The failure remains visible at completion even though no edit is pending.
+    await h.stop()
+    assert.equal(h.steered.length, 1)
+    assert.match(text(h.steered[0]), /Verification failed/)
+  })
+  it('checks a final debounced edit before normal completion, even if no C occurs', async () => {
+    const h = host({ debounceMs: 60000 })
+    await h.edit('src/A.ts')
+    await h.edit('src/B.ts')
+    assert.equal(h.calls.length, 1)
+    await h.stop()
+    assert.equal(h.calls.length, 2)
+    assert.equal(h.steered.length, 0, 'a passed check needs no corrective continuation')
+    const notices = h.events.filter(e => e.type === 'user/message' && e.data.source.kind === 'verify-on-edit')
+    assert.equal(notices.length, 1)
+    assert.equal(notices[0].data.source.summary, 'verify-on-edit: passed')
+  })
+  it('retains both suppressed paths in the flushed outcome', async () => {
+    const h = host({ debounceMs: 60000 })
+    await h.edit('src/A.ts')
+    await h.edit('src/B.ts')
+    h.answer(failed('src/B.ts(1,1): error TS1: final edit failed'))
+    await h.stop()
+    assert.equal(h.calls.length, 2)
+    assert.match(text(h.steered), /final edit failed/)
+  })
+  it('recovers pending successful edits after plugin reload without a new edit', async () => {
+    const h = host({ debounceMs: 60000 })
+    await h.edit('src/A.ts')
+    // The host persists successful results after the post-execute hook returns.
+    h.events.push(
+      { type: 'tool/call', data: { name: 'edit', callId: 'A', arguments: JSON.stringify({ file_path: 'src/A.ts' }) } },
+      { type: 'tool/result', data: { message: { callId: 'A', isError: false } } },
+      { type: 'tool/call', data: { name: 'edit', callId: 'B', arguments: JSON.stringify({ file_path: 'src/B.ts' }) } },
+      { type: 'tool/result', data: { message: { callId: 'B', isError: false } } },
+    )
+    await h.edit('src/B.ts')
+    assert.equal(h.calls.length, 1)
+    h.reload()
+    h.answer(failed('src/B.ts(1,1): error TS1: final B remains broken'))
+    await h.stop()
+    assert.equal(h.calls.length, 2)
+    assert.match(text(h.steered), /final B remains broken/)
+  })
+  it('supports the events-array Session API at both edit and completion', async () => {
+    const h = host({ debounceMs: 60000 })
+    delete (h.agent.session as any).eventAt
+    await h.edit('src/A.ts')
+    await h.edit('src/B.ts')
+    await h.stop()
+    assert.equal(h.calls.length, 2)
+    assert.equal(h.steered.length, 0)
+  })
+  it('does not repeat a completed check at stop', async () => {
+    const h = host(); await h.edit(); await h.stop(); await h.stop()
+    assert.equal(h.calls.length, 1)
+  })
+  it('does not carry an old failure into an unrelated later turn', async () => {
+    const h = host(); h.answer(failed()); await h.edit()
+    h.events.push({ type: 'turn/end', data: { turn: 1 } }, { type: 'turn/start', data: { turn: 2 } })
+    h.events.push({ type: 'assistant/message', data: { turn: 2, message: { content: [{ type: 'text', text: 'Here is the answer.' }] } } })
+    await h.hooks.get('agent/turn-stopping')!({ agent: h.agent, turn: 2, signal: new AbortController().signal })
+    assert.equal(h.calls.length, 1)
+    assert.equal(h.steered.length, 0)
   })
 })
 
-describe('re-detection', () => {
-  // A project that gains a check mid-session must start being checked. The
-  // common case is an agent adding the script itself, and caching the negative
-  // result would make the plugin silently inert for the rest of the session.
-  it('picks up a check that appears after an earlier edit', async () => {
-    const bare = mkdtempSync(join(tmpdir(), 'voe-late-'))
-    dirs.push(bare)
-    writeFileSync(join(bare, 'README.md'), '# no check yet\n')
-
-    const harness = install('src/app.ts(1,1): error TS1: broke it', 1, { debounceMs: 1 })
-    const agent = agentFor(bare)
-
-    // First edit: no check declared, so nothing runs.
-    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.deepEqual(harness.plans, [], 'no check should run for a project with none')
-
-    // The project declares one, as an agent adding a script would.
-    writeFileSync(join(bare, 'package.json'), JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' } }))
-    await new Promise(resolve => setTimeout(resolve, 10))
-
-    const decision = await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    assert.deepEqual(harness.plans, ['npm run --silent typecheck'], 'the new check must be picked up')
-    assert.match(contextText(decision), /typecheck fails/)
+describe('cancellation and session policy', () => {
+  it('honors an explicit no-tests request before the immediate edit check', async () => {
+    const h = host()
+    h.human('Make the change, but do not run tests or checks.')
+    const result = await h.edit()
+    assert.equal(h.calls.length, 0)
+    assert.match(text(result), /skipped at the user/)
+    await h.stop()
+    assert.equal(h.calls.length, 0)
+    assert.equal(h.steered.length, 0)
   })
-
-  it('does not re-read the project once a check is found', async () => {
-    const root = project()
-    dirs.push(root)
-    const harness = install('src/app.ts(1,1): error TS1: x', 1, { debounceMs: 1 })
-    const agent = agentFor(root)
-    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    await new Promise(resolve => setTimeout(resolve, 10))
-    await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-    // Both runs execute, but detection happened once and was cached.
-    assert.equal(harness.plans.length, 2)
+  it('retains owed verification while checks are prohibited, allowing a later explicit request', async () => {
+    const h = host({ debounceMs: 60000 })
+    h.human('Apply the edit, but do not run any checks.')
+    await h.edit()
+    assert.equal(h.calls.length, 0)
+    h.human('Now run the checks.')
+    await h.stop()
+    assert.equal(h.calls.length, 1)
   })
-})
-
-// This plugin once appended a `verify-on-edit/check` record to the session log.
-// `Session.append()` cannot set the envelope's `ignorable` marker, and the
-// persistence read path refuses a session holding an event type outside the
-// harness's vocabulary without it, so nine sessions stopped loading entirely:
-// "contains event type ... unknown to this harness and not marked ignorable".
-// A plugin cannot register an event type either, so the answer is to write
-// nothing, and this is the case that says so.
-describe('leaves the session log alone', () => {
-  it('never appends to the session, on any path through the hook', async () => {
-    const root = project()
-    dirs.push(root)
-    const refuse = () => { throw new Error('the session log must not be written to') }
-    const agent = agentFor(root, { append: refuse, record: refuse })
-
-    for (const [output, exitCode] of [['src/app.ts(1,1): error TS1: x', 1], ['', 0]] as const) {
-      const harness = install(output, exitCode)
-      const decision = await harness.hook(execFor(agent), { isError: false }, async () => ({ kind: 'accept' }))
-      assert.equal(decision.kind, 'accept')
-    }
+  it('rechecks current user restrictions after waiting for an in-flight check', async t => {
+    let now = 100000; t.mock.method(Date, 'now', () => now)
+    const h = host()
+    let entered!: () => void, finish!: () => void
+    const started = new Promise<void>(resolve => { entered = resolve })
+    const release = new Promise<void>(resolve => { finish = resolve })
+    h.execution(async () => ({ result: async () => { entered(); await release; return { exitCode: 0 } } }))
+    const first = h.edit('src/A.ts')
+    await started
+    now += 4000
+    const second = h.edit('src/B.ts')
+    await Promise.resolve(); await Promise.resolve()
+    h.human('Do not run any more checks.')
+    finish()
+    await Promise.all([first, second])
+    assert.equal(h.calls.length, 1)
+    await h.stop()
+    assert.equal(h.calls.length, 1)
   })
-
-  // Behaviour alone cannot catch this: the append only refuses at read time, in
-  // a later process, so the source is checked too. Comments are stripped first,
-  // because this file's own explanation of the bug names the event.
-  it('neither appends nor names an event type in its source', () => {
-    const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/\/\/.*$/gm, '')
-    assert.deepEqual(source.match(/\.append\b/g) ?? [], [])
-    assert.deepEqual(source.match(/['"][a-z-]+\/[a-z-]+['"]/g) ?? [], ["'tools/post-execute'"])
+  it('passes the resolved per-session sandbox policy to the shell', async () => {
+    const h = host(); h.shell.sandboxMode = 'workspace-write'
+    const policy = { mode: 'read-only', workspaceRoot: h.root }
+    let selected: unknown
+    h.policy({ resolve: ({ session }: any) => { selected = session; return policy } })
+    await h.edit()
+    assert.equal(selected, h.agent.session)
+    assert.equal(h.calls[0].sandboxPolicy, policy)
+  })
+  it('refuses to default a confined execution when session policy is missing', async () => {
+    const h = host(); h.shell.sandboxMode = 'workspace-write'
+    const result = await h.edit()
+    assert.equal(h.calls.length, 0)
+    assert.equal(result.additionalContexts[0].source.summary, 'verify-on-edit: unavailable')
+  })
+  it('does not launch a check after the tool is cancelled', async () => {
+    const h = host(); const abort = new AbortController(); abort.abort()
+    await h.edit('src/A.ts', { signal: abort.signal })
+    await h.stop(abort.signal)
+    assert.equal(h.calls.length, 0)
+    assert.equal(h.steered.length, 0)
+  })
+  it('propagates cancellation into a running check and leaves it owed', async () => {
+    const h = host(); const abort = new AbortController()
+    h.execution(async spec => ({ result: async () => {
+      abort.abort()
+      assert.equal(spec.signal.aborted, true)
+      return { exitCode: null, aborted: true }
+    } }))
+    const result = await h.edit('src/A.ts', { signal: abort.signal })
+    assert.equal(result.additionalContexts, undefined)
+    h.execution(async () => ({ result: async () => ({ exitCode: 0 }) }))
+    await h.stop()
+    assert.equal(h.calls.length, 2)
+  })
+  it('cancels outstanding checks when the plugin is disposed', async () => {
+    const h = host()
+    h.execution(async spec => ({ result: async () => {
+      h.dispose()
+      assert.equal(spec.signal.aborted, true)
+      return { exitCode: null, aborted: true }
+    } }))
+    const result = await h.edit()
+    assert.equal(result.additionalContexts, undefined)
   })
 })

@@ -64,6 +64,10 @@ Mark a step complete as soon as it is, and keep exactly one in progress. Do not 
 have just recorded; the harness already displays it, so say what changed and what is next. When you
 learn something that changes the plan, revise it and say why.
 
+If \`workflow_context\` is available, save a compact objective, constraints, decisions and remaining
+checks for substantial tasks. Update that snapshot when the user's scope changes, and clear it
+when the task is complete. These are your working notes; they do not establish user approval.
+
 During long stretches, send a short progress note at natural checkpoints: one or two
 sentences on what you finished and what is next. Before a large or slow operation, say briefly
 what you are about to do and why.`,
