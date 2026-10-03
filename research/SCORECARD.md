@@ -9,10 +9,15 @@ mistakes.
 
 Worse, and worth saying plainly: **nothing built so far has been shown to reduce mistakes.** A
 mistake is now defined and counted, and the count has not moved in the direction the work predicted;
-see [Re-measured](../tools/README.md). The three mechanical items below were built after this page
-was written, so the rows that said "No" now describe a plugin that is mounted and running in the
-desktop profile rather than nothing at all. What is still missing is the comparison that would let
-anyone say whether they help.
+see [Re-measured](../tools/README.md). The sharpest version of that, measured 2026-10-03: the one
+counter with a named plugin behind it — `read-after-edit`, which `dsh-edit-feedback` was built to cut
+— shows **no detectable change** once the events are normalised by the files a session edited,
+−5% with an interval that includes no change. The counter that did fall, `rework` at −36%, is one
+nothing was built for. The earlier reading that looked like a halving was mostly the denominator:
+the post-install sessions were simply less edit-heavy per call. The three mechanical items below were
+built after this page was written, so the rows that said "No" now describe a plugin that is mounted
+and running in the desktop profile rather than nothing at all. What is still missing is the
+comparison that would let anyone say whether they help.
 
 ---
 
@@ -33,7 +38,7 @@ anyone say whether they help.
 | 11 | Automatic memory pipeline | Not addressed. |
 | 12 | Execpolicy command rules | Not addressed. |
 | 13 | Approval memory (prefix grants) | **Addressed.** [`dsh-approval-memory`](../packages/dsh-approval-memory) answers the approval waterfall from command-prefix rules. |
-| 14 | Same-turn escalation retry | Not addressed. |
+| 14 | Same-turn escalation retry | **Measured, then dropped.** 1 denial in 18,660 tool calls, recovered in the same turn the runtime's own hint. See [Item 14](#item-14-measured-then-dropped). |
 | 15 | LSP diagnostics fed into the edit loop | Not addressed. |
 | 16 | `request_permissions` with a full profile | Not addressed. |
 | 17 | `get_context_remaining`, `new_context_window` | Not addressed. |
@@ -96,6 +101,43 @@ So this is not a build that a plugin in this repository can perform. The largest
 has no seam a plugin can reach, and if it did, the saving is under 1% of the window. If upstream ever
 lets MCP definitions be declared deferred, re-run `node tools/tool-budget.mjs` first: the number, not
 the feature, is what should reopen it.
+
+## Item 14, measured then dropped
+
+Same disposition as item 2, reached the same way. [R2](raw/06-safety-approvals.md) claims "a denial
+costs one extra model turn *and* one prompt, per denial". One of those is countable, so it was
+counted with `node tools/escalation-census.mjs` before anything was finished:
+
+```
+sessions            75
+tool calls          18660
+sandbox denials     1   in 1 session(s)
+  re-issued         1   a later same-tool call asked to widen
+  turns to re-issue {"0":1}
+escalation asks     172 with no denial recorded before them
+```
+
+**The turn is not there.** Across 18,660 tool calls there is exactly one denial, and it cost no
+extra turn: it was answered in the same turn, one step later. The runtime had already told the model
+what to do — the denied result carries `[sandbox: escalation available — retry this exact command
+once with sandbox_permissions ...]` — so the recovery is guided rather than guessed.
+
+Two further findings close the implementation rather than the idea:
+
+- **The trigger is wrong even if the feature were wanted.** Of the 173 escalation asks, 11 followed
+  a raw `EPERM: operation not permitted` from the sandbox and only 1 followed the
+  `[sandbox: file access denied under <mode> mode]` marker a plugin can detect. Keying on the marker
+  finds roughly one refusal in twelve.
+- **The seam is off-contract.** `tools/execute` is the only re-callable wrapper point, but its
+  README states that wrappers "may replace only the operational signal", and `ToolDispatchExecution`
+  leaves `arguments` readonly. A retry with different arguments is not something a plugin is offered.
+
+What the same run does surface is worth more than the item: **172 of 173 escalation asks had no
+denial before them.** The models asked to widen the sandbox pre-emptively, all of them to
+`danger-full-access` and never to the narrow rung (148 `bash`, 24 `edit`, 1 `write`), because the
+work genuinely needed to leave the workspace. The recurring cost here is approval friction on work
+that leaves the workspace — not recovery from a refusal. `dsh-approval-memory`'s session grant
+already absorbs the `bash` half; the 25 `edit`/`write` asks are uncovered.
 
 ## The part that matters more than the list
 

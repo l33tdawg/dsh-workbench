@@ -26,10 +26,16 @@
  * instead of leaving it to an ad-hoc script.
  *
  * Usage:
- *   node session-audit.mjs [--root <sessions dir>] [--since <date>] [--json] [--verbose]
+ *   node session-audit.mjs [--root <sessions dir>] [--since <date>] [--until <date>] [--json] [--verbose]
  *
  *   --since   keep only sessions that STARTED at or after this instant; accepts
  *             a date, a date-time, or an ISO string
+ *   --until   keep only sessions that started BEFORE this instant. `--since`
+ *             and `--until` together read one window of a split corpus, so both
+ *             halves of an install-time comparison come from the same tool.
+ *   --session keep only sessions whose path contains this id. For a corpus that
+ *             several runs write into, where reading it whole answers a question
+ *             about the corpus rather than about the run.
  *
  * @module dsh-session-audit
  */
@@ -50,6 +56,14 @@ const AS_JSON = flag('--json')
 const VERBOSE = flag('--verbose')
 
 /**
+ * The `--session` filter, or undefined when the flag is absent.
+ *
+ * A corpus that several runs write into cannot answer a question about one run
+ * by being read whole, so a caller holding a session id needs a way to say so.
+ */
+const SESSION = value('--session')
+
+/**
  * The `--since` instant, or undefined when the flag is absent.
  *
  * Rejecting an unparseable value rather than ignoring it is deliberate: a
@@ -67,6 +81,31 @@ const SINCE = (() => {
   }
   return at
 })()
+
+/**
+ * The `--until` instant, or undefined when the flag is absent.
+ *
+ * The complement of `--since`, and it exists for the same reason: an install
+ * time splits the corpus into two windows, and reading the second one alone
+ * says nothing about the change unless the first can be read the same way.
+ * Hand-subtracting one window's totals from the whole corpus is how a rate gets
+ * quoted against a denominator nobody re-derived.
+ */
+const UNTIL = (() => {
+  const raw = value('--until')
+  if (raw === undefined) return undefined
+  const at = Date.parse(raw)
+  if (Number.isNaN(at)) {
+    console.error(`--until is not a date: ${raw}`)
+    process.exit(2)
+  }
+  return at
+})()
+
+if (SINCE !== undefined && UNTIL !== undefined && SINCE >= UNTIL) {
+  console.error('--since must precede --until')
+  process.exit(2)
+}
 
 /** Zstd frames start with this magic, little-endian on disk. */
 const FRAME_MAGIC = 0xfd2fb528
@@ -405,12 +444,18 @@ function main() {
 
   const rows = []
   let skippedBySince = 0
+  let skippedByUntil = 0
   for (const file of files) {
     try {
+      if (SESSION !== undefined && !file.path.includes(SESSION)) continue
       const records = parseSession(readSession(file.path))
       const startedAt = sessionStartedAt(records)
       if (SINCE !== undefined && (startedAt === undefined || startedAt < SINCE)) {
         skippedBySince++
+        continue
+      }
+      if (UNTIL !== undefined && (startedAt === undefined || startedAt >= UNTIL)) {
+        skippedByUntil++
         continue
       }
       const counts = audit(records)
@@ -434,9 +479,18 @@ function main() {
     console.log(JSON.stringify({
       root: ROOT,
       since: SINCE === undefined ? undefined : new Date(SINCE).toISOString(),
+      until: UNTIL === undefined ? undefined : new Date(UNTIL).toISOString(),
+      session: SESSION,
       skippedBySince,
+      skippedByUntil,
       sessions: rows.length,
       total,
+      /** The same events per 100 edited files: the exposure they compete for. */
+      per100EditedFiles: total.filesEdited === 0 ? undefined : {
+        rework: (100 * total.rework) / total.filesEdited,
+        readAfterEdit: (100 * total.readAfterEdit) / total.filesEdited,
+        undoEvents: (100 * total.undoEvents) / total.filesEdited,
+      },
       distribution: shape,
       rows,
     }, null, 2))
@@ -446,6 +500,9 @@ function main() {
   console.log(`sessions analysed: ${rows.length}`)
   if (SINCE !== undefined) {
     console.log(`started at/after:  ${new Date(SINCE).toISOString()} (${skippedBySince} older session(s) skipped)`)
+  }
+  if (UNTIL !== undefined) {
+    console.log(`started before:    ${new Date(UNTIL).toISOString()} (${skippedByUntil} newer session(s) skipped)`)
   }
   console.log(`tool calls:        ${total.toolCalls}`)
   console.log()
@@ -461,6 +518,20 @@ function main() {
   const pct = n => `${(100 * n).toFixed(1)}%`
   console.log(`pooled rate: ${per100.toFixed(1)} undo-class events per 100 tool calls`)
   console.log()
+  // Two denominators, because they disagree. `read-after-edit` and `rework` are
+  // events per OPPORTUNITY, and the opportunity is a file this session edited -
+  // not the calls it happened to make. A window whose sessions were merely less
+  // edit-heavy per call therefore reads as an improvement on the call
+  // denominator while the events per edited file have not moved at all. Half of
+  // a before/after comparison quoted on calls alone was that artifact.
+  if (total.filesEdited > 0) {
+    console.log('per 100 edited files, which is the exposure these events compete for')
+    const perFiles = n => ((100 * n) / total.filesEdited).toFixed(1)
+    console.log(`  rework           ${perFiles(total.rework).padStart(6)}`)
+    console.log(`  read-after-edit  ${perFiles(total.readAfterEdit).padStart(6)}`)
+    console.log(`  total            ${perFiles(total.undoEvents).padStart(6)}`)
+    console.log()
+  }
   console.log('per-session distribution')
   console.log(`  sessions with none       ${String(shape.withNoUndoEvents).padStart(5)} of ${shape.sessions}`)
   console.log(`  sessions with exactly one ${String(shape.withOneUndoEvent).padStart(4)} of ${shape.sessions}`)

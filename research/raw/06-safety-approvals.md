@@ -364,6 +364,10 @@ Effort scale: **L** = hours, **M** = a day or two, **H** = a week+.
 
 **Rationale:** Today a denial costs one extra model turn *and* one prompt, per denial (`render.ts` hint marker + `tool-bash/src/index.ts:393-405`). Codex does this in-turn (`orchestrator.rs:317-513`) for one prompt. This is the highest-ratio UX win available: no new security surface (the approval still gates it), pure latency/token saving.
 
+**Measured 2026-10-03, and the premise does not hold.** `node tools/escalation-census.mjs` over the whole corpus finds **1 sandbox denial in 18,660 tool calls** across 75 sessions, and that one was answered in the *same* turn, one step later — not a turn later. The denied result already carries `[sandbox: escalation available — retry this exact command once with sandbox_permissions ...]`, so the recovery was guided, not guessed. On this evidence the item was dropped rather than built.
+
+The same run also disqualifies the obvious implementation: of 173 escalation asks, 11 followed a raw `EPERM: operation not permitted` and only **1** produced the `[sandbox: file access denied under <mode> mode]` marker that `sandboxDenialMarker` emits and a plugin can read — the marker finds roughly one refusal in twelve. And the retry has no seam a plugin may use: `tools/execute` is the one re-callable wrapper point, but its README says wrappers "may replace only the operational signal" and `ToolDispatchExecution` leaves `arguments` readonly, so re-dispatching with escalation fields is off-contract. What the corpus does show is 172 of 173 asks made **before** any denial — models widening pre-emptively to `danger-full-access`, 148 `bash` / 24 `edit` / 1 `write` — which is the approval-friction problem R3 addresses, not this one.
+
 ---
 
 ### R3 — Approval memory: session-scoped and command-prefix grants

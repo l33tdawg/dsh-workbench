@@ -139,6 +139,46 @@ has already shown that one session can carry a whole measurement, so treat the h
 suggestive rather than settled. Re-run it after a comparable stretch before leaning on the size of
 the effect.
 
+### The re-run, and the denominator that was doing the work
+
+Re-run on 2026-10-03 with a corpus more than twice the size, and with `--until` added so both
+windows come from this tool instead of one window plus hand-subtraction. **The halving did not
+survive, and the reason is the denominator.**
+
+```
+$ node tools/session-audit.mjs --until '2026-10-02 14:19'   # no packs
+$ node tools/session-audit.mjs --since '2026-10-02 16:47:33' # both packs
+
+                   per 100 calls   per 100 edited files   95% CI (per file)
+read-after-edit        -31%               -5%             0.75 .. 1.20
+rework                 -54%              -36%             0.47 .. 0.88
+total undo-class       -42%              -20%             0.66 .. 0.96
+```
+
+`read-after-edit` and `rework` are events per **opportunity**, and the opportunity is a file the
+session edited — not the calls it happened to make. The two windows do not have the same edit
+density: **3.2 files edited per 100 calls before, 2.4 after.** A window whose sessions were merely
+less edit-heavy per call therefore reads as an improvement on the call denominator while the events
+per edited file have barely moved. The earlier 1.4 → 0.7 reading was taken on the call
+denominator, and most of it was this.
+
+Two things follow, and neither supports the prediction:
+
+- **The metric the plugin was built to move did not move.** `read-after-edit` per edited file is
+  −5%, with an interval that includes no change. The interval does rule out the predicted halving,
+  so the honest reading is "no detectable effect", not "no effect".
+- **The counter that did move is the one nobody targeted.** `rework` fell 36% and its interval
+  excludes no change. The prediction was that `read-after-edit` falls "and the other three counters
+  do not move"; the other counters moved, and one moved more.
+
+There is also no baseline that could attribute a change to `dsh-edit-feedback` alone: the
+reliability pack landed at 14:19 and edit-feedback at 16:47, and the window between them holds 10
+sessions and 29 edited files. So this corpus can say the prediction failed; it cannot say which
+pack, if either, moved `rework`.
+
+The tool now prints both denominators, because a comparison quoted on calls alone was half
+artifact and nothing in the output said so.
+
 ## How to use it
 
 ```sh
@@ -302,6 +342,71 @@ definition is not consumed until the agent is mounted again. The finding, the me
 the two corrections it makes to the filed report are in
 [`../patches/FINDING-profile-reload-boundary.md`](../patches/FINDING-profile-reload-boundary.md).
 
+## A blind spot in every number on this page
+
+`tools/session-audit.mjs` cannot see `apply_patch`. Its `WRITE_TOOLS` holds `edit`, `write` and
+`str_replace_editor`; `apply_patch` is absent, and `pathOf` reads `args.file_path ?? args.path`
+while an `apply_patch` call carries `{ patch }` instead. Across the 78 real sessions on this
+machine:
+
+```
+edit                 1194
+write                 415
+apply_patch           722   <- unseen
+str_replace_editor      0
+
+1609 counted, 722 invisible => 31.0% of write calls are unseen
+```
+
+`apply_patch` is this repository's own plugin, mounted in the desktop profile since 2026-10-02. So
+every `filesEdited` above is a floor rather than a count, and `read-after-edit` and `rework` inherit
+the gap twice over, because both key off the set of paths the audit believes were edited — a file
+touched only through `apply_patch` is never read "after an edit" and never accumulates toward
+`rework`.
+
+The fix is to teach `pathOf` to read every target out of a multi-file patch, which changes what the
+counters mean and therefore invalidates the rates quoted in this file. That is a deliberate piece of
+work rather than a one-line change, and it is recorded here instead of being patched quietly: the
+baseline, the re-measured split below and the escalation census all predate it.
+
+## What a sandbox denial costs
+
+`tools/escalation-census.mjs` measures the premise behind Codex-parity item 14 — that a denial makes
+the model spend a whole turn re-issuing the command with `sandbox_permissions`. It did not, and the
+item was dropped rather than built.
+
+```
+$ node tools/escalation-census.mjs
+sessions            75
+tool calls          18660
+sandbox denials     1   in 1 session(s)
+  re-issued         1   a later same-tool call asked to widen
+  turns to re-issue {"0":1}
+  denied mode       {"workspace-write":1}
+escalation asks     172 with no denial recorded before them
+```
+
+The one denial was recovered in the same turn, one step later, and the runtime had already told the
+model what to do — the denied result carries `[sandbox: escalation available — retry this exact
+command once with sandbox_permissions ...]`. So there is no wasted turn to remove.
+
+**The counter that matters is the last one.** 172 escalation asks had no denial before them: the
+models asked to widen the sandbox *pre-emptively*, mostly because the work itself needed to write
+outside the workspace. All 173 asked for `danger-full-access`, never the narrow rung — 148 `bash`,
+24 `edit`, 1 `write`. The recurring cost in this corpus is approval friction on work that genuinely
+leaves the workspace, not recovery from a refusal.
+
+One trap is worth naming, because it is the reason this census exists as a tool rather than a
+grep. The marker string `[sandbox: file access denied under <mode> mode]` is in the system prompt,
+in the bash tool's own description, and in every file that quotes either. At the time of writing a
+raw substring search over `tool/result` records matches **54** of them, and a whole-session text
+search reports **75 of 76** sessions as containing a denial. Both numbers rise as the corpus grows,
+because notes like this one quote the marker. The census therefore counts a denial only when the
+marker occupies a line of its own inside a `tool/result` from a tool that does not echo file
+contents, and it reads the answered call from `data.message.toolCallId` — reading `data.toolCallId`
+instead yields `undefined` for every result and turns the re-issue count into a silent zero rather
+than an error.
+
 ## Next step
 
 The pack is installed. The prompt-level lever did not visibly move the number, so the mechanical one
@@ -315,3 +420,17 @@ That is a sharper prediction than the guidance pack's, because it changes what t
 
 Work normally for a comparable stretch, then re-run. If `read-after-edit` does not move, cut the
 plugin rather than keeping it because it looks thorough.
+
+**That stretch has now passed and the test has been run.** `read-after-edit` per edited file is
+−5% with an interval that includes no change, while `rework` — which nothing was built for — fell
+36% significantly. See [the re-run](#the-re-run-and-the-denominator-that-was-doing-the-work). The
+rule above therefore points at `dsh-edit-feedback`, and the corpus cannot yet say whether cutting it
+would cost anything, because the two packs landed 2h28m apart and the window between them holds 10
+sessions.
+
+**Action taken 2026-10-03: unmounted, not deleted.** `@l33tdawg/dsh-edit-feedback` was removed from
+the desktop profile's `dsh.profile.bundles` list, which is what stops it loading; it remains a
+dependency of that profile and its package is untouched in this repository. The unmount is the
+decision the rule called for and it is one line to reverse. What would reverse it is a measurement
+this tool cannot currently make: the counters here do not observe whether a diff in the result helps
+the model, only whether the file gets read back, and the file getting read back did not change.

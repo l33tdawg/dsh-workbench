@@ -26,12 +26,17 @@ The prompt-level fix was tried first, in `dsh-guidance-pack`:
 > After a successful edit, do not re-read the file to confirm. The call fails if
 > it did not apply, so re-reading only spends context.
 
-That was the weakest available lever, and it has since been removed: once this
-plugin was measured at work (read-after-edit 1.4 -> 0.7 per 100 calls across the
-sessions either side of its first delivered diff; the other counters unchanged),
-the prompt line was the redundant half. The quote survives here as a record. This
-plugin is the mechanical one — the tool result carries the diff, so there is
-nothing left to check.
+That was the weakest available lever, and it has since been removed: the halving this plugin first
+appeared to produce (read-after-edit 1.4 -> 0.7 per 100 calls across the sessions either side of its
+first delivered diff) did not survive a re-measurement on a corpus more than twice the size. Once
+the events are normalised by the files a session edited rather than the calls it made, the change is
+−5% with an interval that includes no change. The prompt line was removed on the strength of the
+first reading, which was mostly a denominator artifact; the quote survives here as a record.
+
+**This plugin is unmounted as of 2026-10-03**, on the prediction below failing. The re-run, the
+denominators and the decision are in [`tools/README.md`](../../tools/README.md#the-re-run-and-the-denominator-that-was-doing-the-work).
+Nothing here is a claim that returning a diff is worthless — only that the counter this plugin was
+built to move did not move.
 
 ## What it does
 
@@ -141,3 +146,26 @@ node tools/session-audit.mjs --json > after.json
 
 If the count does not move, this plugin is not pulling its weight and should be
 cut rather than kept because it looks thorough.
+
+### Outcome
+
+**The count did not move, and the rule above was followed.** Re-measured 2026-10-03:
+
+| | per 100 calls | per 100 edited files | 95% CI (per file) |
+|---|---|---|---|
+| `read-after-edit` | −31% | **−5%** | 0.75–1.20, includes no change |
+| `rework` | −54% | −36% | 0.47–0.88 |
+
+The per-call column is the one the earlier reading used, and it overstates every
+change: the post-install sessions edited 2.4 files per 100 calls against 3.2
+before, so a rate expressed per call falls whether or not the behaviour did. Per
+edited file — the exposure these events actually compete for — `read-after-edit`
+is unchanged, and `rework`, which nothing was built for, is the counter that fell.
+The audit now prints both denominators.
+
+Unmounted from the desktop profile on 2026-10-03: removed from
+`dsh.profile.bundles`, still a dependency, package untouched. One line restores
+it. The honest limit of this result is that these counters observe whether the
+file gets read back, not whether a diff in the result helps the model, so this is
+a decision about the metric that was named in advance rather than a verdict on
+diffs.
