@@ -28,23 +28,46 @@ package below carries its own README; the directories name their entry point:
 | [`dsh-guidance-pack`](packages/dsh-guidance-pack) | Behavioural prompt guidance: planning, verification, editing constraints, destructive actions, reporting. |
 | [`dsh-apply-patch`](packages/dsh-apply-patch) | A multi-file atomic `apply_patch` — one call, many hunks, all or nothing. |
 | [`dsh-edit-feedback`](packages/dsh-edit-feedback) | Returns the diff Harness already computes to the model, so it knows where its edit landed. |
-| [`dsh-verify-on-edit`](packages/dsh-verify-on-edit) | Runs the project's own check after an edit and reports what the change broke. |
+| [`dsh-verify-on-edit`](packages/dsh-verify-on-edit) | Tracks file-tool edits through debounce, checks pending edits before completion, reports explicit outcomes and permits one corrective continuation per turn. |
 | [`dsh-check-claims`](packages/dsh-check-claims) | Turns a countable claim into a command with an exact answer, against the working tree or a named revision. |
-| [`dsh-compaction-todo`](packages/dsh-compaction-todo) | Puts the todo list back into context after a compaction, replayed from the durable log. |
+| [`dsh-compaction-todo`](packages/dsh-compaction-todo) | Restores saved task state after compaction without duplicate reminders; optionally adds `workflow_context` for the objective, constraints, decisions and remaining checks. |
 | [`dsh-approval-memory`](packages/dsh-approval-memory) | Answers the approval waterfall from command-prefix rules, and for the rest of a session once a human has allowed one escalation of that kind. |
 
 Three directories hold the rest:
 
-- [`tools/`](tools/README.md) — nine scripts that read the durable session logs
-  and the request budget. `tools/README.md` documents the four whose numbers
-  this repository quotes as evidence; the others are checks and repairs that
-  carry their own headers.
+- [`tools/`](tools/README.md) — session-log audits, the reliability census,
+  request-budget checks and repair utilities. The README explains the reported
+  measurements and their limits; individual scripts carry usage headers.
 - [`patches/`](patches/) — six reports, one proposal and five comments filed
   against `deepseek-harness`, indexed in
   [`UPSTREAM-REPORTS.md`](patches/UPSTREAM-REPORTS.md), plus the appliers that
   carry local fixes and the corrections made after filing.
 - [`research/`](research/SCORECARD.md) — the Codex comparison and the
   measurements behind the pack. The scorecard is the entry point.
+
+## Reliability pack
+
+Install [`dsh-uplift`](packages/dsh-uplift/README.md) to mount the guidance,
+editing, verification, claim-checking and continuity plugins together. Its
+profile patch enables `workflow_context`; standalone `dsh-compaction-todo`
+installs leave that tool off unless `workflowContext: true` is configured.
+
+Verification retains successful file-tool edits made inside the debounce window
+and checks pending edits before a normal completion. Edits made through arbitrary
+shell commands are outside that tracking. Outcomes distinguish a pass, a reported
+failure, a timeout, an unavailable check, no configured check, unparsed failure
+output and cancellation. Checks use the session's shell policy and respect
+explicit current-turn requests to skip tests or checks. The completion guard
+can request one corrective continuation per turn; it respects stop requests
+and approval limits. Saved workflow notes are model-authored task state, not
+permission to take additional actions.
+
+The [regression cases and evaluation guide](research/RELIABILITY-EVAL.md)
+document what is tested and how to compare coding-task outcomes. The local
+`node tools/reliability-census.mjs --json` report reads session logs without
+uploading transcripts. Missing verification records mean unknown coverage;
+the baseline and passing plugin tests do not establish improved model quality.
+After replacing installed plugin code, restart Harness to load the new modules.
 
 ## Why this exists
 
@@ -264,11 +287,14 @@ pin it explicitly on the loader row:
 
 ```sh
 npm install          # dev dependencies only
-npm test             # 113 tests: 77 for the plugin (mapping, substitution,
-                     # precedence, the SAGE HTTP credential path, and a real
-                     # end-to-end mount) and 36 for the tools
+npm test             # workspace-mcp and session-log tool tests
 npm run typecheck    # parse every package and tool the profile loads directly
 ```
+
+Each package under `packages/` has its own test command. The
+[uplift README](packages/dsh-uplift/README.md#tests) lists the bundle's suites;
+the [evaluation guide](research/RELIABILITY-EVAL.md#fixed-regression-scenarios)
+gives the focused verification, completion and continuity checks.
 
 `tests/integration.test.ts` bootstraps the real tool registry and the real
 `mcp-client`, writes a `.mcp.json`, and asserts the fixture's tool lands in the
