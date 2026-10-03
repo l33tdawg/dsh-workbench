@@ -916,6 +916,18 @@ Codex keeps a process-scoped LRU of recent tool catalogs (32 entries, 30-minute 
 
 **Caveat:** `listChanged` correctness must be preserved. The current design deliberately refreshes (`tools.ts:123`); any cache must be invalidated by the `onChanged` path (`index.ts:263-269`) and by `dispose()`.
 
+**Corrected 2026-10-03, before building it.** The plan above writes a second catalog cache. Do not:
+the pinned SDK (`@modelcontextprotocol/client` 2.0.0) already has one, and it is the better one.
+`ClientOptions.responseCacheStore` is preserved across `ClientResponseCache.resetForReconnect()`
+while the default per-client store is cleared, `CacheMode` already distinguishes
+`'use'`/`'refresh'`/`'bypass'`, and `list_changed` eviction is the SDK's. So the DSH-side change is
+two lines of intent — share one store across generations, list with `'use'` on a reconnect — plus a
+policy for servers that declare nothing. See
+[`../../patches/FINDING-mcp-catalog-reuse.md`](../../patches/FINDING-mcp-catalog-reuse.md). One
+measurement decided the policy: on the 2026-07-28 revision the server framework emits `ttlMs: 0`
+(the spec's "immediately stale") for a server that declares no hint, and the client honours that
+over `defaultCacheTtlMs`. A client cannot, and should not, make a "do not cache me" server reusable.
+
 ---
 
 ### R6 — Ship a default memory path rather than a reference document `[WS]` then `[UP]`

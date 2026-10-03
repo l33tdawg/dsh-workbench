@@ -130,3 +130,9 @@ Stated plainly, because an assumed fence is worse than none.
 | `build-submission.mjs` | Builds the GraphQL payload; keeps the body out of shell quoting |
 | `enable-auto-review.md` | Separate, unrelated: switching on DSH's guardian equivalent |
 | `UPSTREAM-REPORTS.md` | The four remaining upstream reports, not yet filed |
+
+## Other patches in this directory
+
+| Patch | Status |
+|---|---|
+| [`mcp-catalog-reuse.patch`](mcp-catalog-reuse.patch), [applier](mcp-catalog-reuse.mjs), [probe](mcp-catalog-reuse-probe.mjs) | Applied and tested in the checkout at `3e6ed5f11f`; filed as [discussion 8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720). See [`FINDING-mcp-catalog-reuse.md`](FINDING-mcp-catalog-reuse.md). |

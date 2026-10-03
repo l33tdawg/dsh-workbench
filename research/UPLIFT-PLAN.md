@@ -305,7 +305,7 @@ deployment it already resolves to the correct 80%.
 | 3.5 | Model-invocable compaction (`new_context` equivalent) | M | M |
 | 3.6 | LSP: stop discarding diagnostics; wire them into `tools/post-execute` | **H** | H |
 | 3.7 | Ship a default language-server table and mount `tool-lsp` | **H** | L |
-| 3.8 | Cache MCP tool catalogs across reconnects | L–M | S |
+| 3.8 | Cache MCP tool catalogs across reconnects — **built** and filed as [discussion 8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720), [`patches/mcp-catalog-reuse.patch`](../patches/mcp-catalog-reuse.patch) | L–M | S |
 | 3.9 | MCP OAuth / bearer / dynamic headers | M | M |
 | 3.10 | Worktree-per-subagent provider | M | M |
 
@@ -319,6 +319,16 @@ operations, the notification channel carrying `publishDiagnostics` is discarded
 mounted by **no shipped preset**, so default language coverage is effectively zero. The substrate
 for a post-edit diagnostics loop already exists at `tools/post-execute`; only the semantics are missing
 (the README names them: "freshness and accumulation rules").
+
+**3.8 is built, and smaller than its raw report proposed.** R5 called for a new `catalog-cache.ts`
+LRU; the pinned SDK already ships one, so the change is to share one response store across transport
+generations and ask for a cached list on a reconnect instead of writing a second cache. What
+measurement added is the protocol detail that decides the outcome: on the 2026-07-28 revision a
+server declares cacheability with `ttlMs`, the server framework emits `ttlMs: 0` ("immediately
+stale") when the server declares nothing, and an explicit declaration beats any client default. So
+the reuse is server-declared wherever the server speaks, with a bounded client fallback only where
+it is silent. Notably, this item is *not* on the critical path for the 63 %-of-tool-bytes finding —
+those bytes are sent either way; see [`../patches/FINDING-mcp-catalog-reuse.md`](../patches/FINDING-mcp-catalog-reuse.md).
 
 ---
 

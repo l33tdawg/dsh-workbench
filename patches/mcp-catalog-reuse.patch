@@ -1,0 +1,546 @@
+diff --git a/packages/mcp/mcp-client/src/connection.ts b/packages/mcp/mcp-client/src/connection.ts
+index 9a4ec9123a..a9efa3d0c6 100644
+--- a/packages/mcp/mcp-client/src/connection.ts
++++ b/packages/mcp/mcp-client/src/connection.ts
+@@ -15,7 +15,7 @@
+  * @module
+  */
+ 
+-import { Client, type Transport } from '@modelcontextprotocol/client'
++import { Client, InMemoryResponseCacheStore, MAX_CACHE_TTL_MS, type Transport } from '@modelcontextprotocol/client'
+ import type { Context } from '@deepseek-ai/cordis'
+ import { assertNever, type JsonValue } from '@deepseek-ai/dsh-util-values'
+ import type { ServerContext } from './server-context.ts'
+@@ -35,6 +35,16 @@ export interface ReconnectConfig {
+   maxDelayMs?: number
+   /** Consecutive failed attempts per outage before giving up for good (default 10). */
+   maxAttempts?: number
++  /**
++   * Reuse window (ms) for a tool catalog listed before a transport drop
++   * (default 300000 — long enough to cover an outage the attempt budget could
++   * still be retrying, short enough that a stale listing cannot outlive it,
++   * and bounded above by the SDK's own cache ceiling). A positive value also
++   * supplies the lifetime for a server that declares none; a server that
++   * declares its own always wins, including the protocol's `ttlMs: 0`
++   * ("immediately stale"). `0` disables reuse entirely.
++   */
++  catalogReuseTtlMs?: number
+ }
+ 
+ /** Defaults shared by the Config schema and {@link resolveReconnectPolicy}. */
+@@ -43,6 +53,7 @@ export const RECONNECT_DEFAULTS: Required<ReconnectConfig> = Object.freeze({
+   initialDelayMs: 500,
+   maxDelayMs: 30_000,
+   maxAttempts: 10,
++  catalogReuseTtlMs: 300_000,
+ })
+ 
+ /** Default UTF-8 byte limit for attributed server instructions. */
+@@ -76,6 +87,7 @@ export function resolveReconnectPolicy(config: ReconnectConfig | undefined, path
+   const initialDelayMs = config?.initialDelayMs ?? RECONNECT_DEFAULTS.initialDelayMs
+   const maxDelayMs = config?.maxDelayMs ?? RECONNECT_DEFAULTS.maxDelayMs
+   const maxAttempts = config?.maxAttempts ?? RECONNECT_DEFAULTS.maxAttempts
++  const catalogReuseTtlMs = config?.catalogReuseTtlMs ?? RECONNECT_DEFAULTS.catalogReuseTtlMs
+   /* jscpd:ignore-start — domain-specific delay validation parallels llm retry-policy; not extractable */
+   if (!Number.isFinite(initialDelayMs) || initialDelayMs <= 0 || initialDelayMs > MAX_TIMER_DELAY_MS) {
+     throw new Error(`${path}.initialDelayMs must be a positive finite number no greater than ${MAX_TIMER_DELAY_MS}`)
+@@ -89,8 +101,14 @@ export function resolveReconnectPolicy(config: ReconnectConfig | undefined, path
+   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+     throw new Error(`${path}.maxAttempts must be a positive integer`)
+   }
++  if (!Number.isFinite(catalogReuseTtlMs) || catalogReuseTtlMs < 0) {
++    throw new Error(`${path}.catalogReuseTtlMs must be a non-negative finite number`)
++  }
++  if (catalogReuseTtlMs > MAX_CACHE_TTL_MS) {
++    throw new Error(`${path}.catalogReuseTtlMs must be no greater than ${MAX_CACHE_TTL_MS}`)
++  }
+   /* jscpd:ignore-end */
+-  return Object.freeze({ enabled, initialDelayMs, maxDelayMs, maxAttempts })
++  return Object.freeze({ enabled, initialDelayMs, maxDelayMs, maxAttempts, catalogReuseTtlMs })
+ }
+ 
+ /** Result from the initial connection attempt, for startup-await semantics. */
+@@ -127,10 +145,17 @@ export interface ConnectionHandle extends ServerContext {
+ export function startConnection(ctx: Context, config: Config, policy: ResolvedReconnectPolicy): ConnectionHandle {
+   const label = `mcp-client(${config.serverName})`
+   const incompleteDisposalMessage = `${label}: transport closure could not be confirmed during disposal — server shutdown may be incomplete`
++  // One response cache per plugin instance, shared by every transport
++  // generation this supervisor creates. The SDK keys entries by the connected
++  // server's identity and evicts them on `list_changed`, so only a reconnect
++  // can consult a listing that predates it, and only while that entry is
++  // still fresh under `catalogReuseTtlMs`.
++  const responseCache = new InMemoryResponseCacheStore()
+   const opts: ToolBridgeOptions = {
+     registrationFailure: 'contain',
+     serverName: config.serverName,
+     toolCallTimeoutMs: config.toolCallTimeoutMs,
++    cacheMode: 'refresh',
+   }
+   // The initial sync uses 'throw' when failOnStartupError is configured, so
+   // a registration conflict propagates to the startup-await path. Re-syncs
+@@ -138,6 +163,13 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
+   const startupOpts: ToolBridgeOptions = config.failOnStartupError
+     ? { ...opts, registrationFailure: 'throw' }
+     : opts
++  // A reconnect is the one sync allowed to reuse the catalog the previous
++  // generation listed; the initial connect and every server-reported change
++  // always list again.
++  const reconnectOpts: ToolBridgeOptions = {
++    ...opts,
++    cacheMode: policy.catalogReuseTtlMs > 0 ? 'use' : 'refresh',
++  }
+ 
+   let disposed = false
+   const maxInstructionBytes = config.maxInstructionBytes ?? DEFAULT_MAX_INSTRUCTION_BYTES
+@@ -260,6 +292,8 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
+       {
+         capabilities: {},
+         versionNegotiation: { mode: 'auto' },
++        responseCacheStore: responseCache,
++        defaultCacheTtlMs: policy.catalogReuseTtlMs,
+         listChanged: {
+           tools: {
+             autoRefresh: false,
+@@ -320,7 +354,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
+       if (Buffer.byteLength(instructions) > maxInstructionBytes) {
+         throw new Error(`${label}: server instructions exceed maxInstructionBytes (${maxInstructionBytes})`)
+       }
+-      await enqueueSync(generation, startup ? startupOpts : opts)
++      await enqueueSync(generation, startup ? startupOpts : reconnectOpts)
+     } catch (error) {
+       if (firstAttemptError === undefined) firstAttemptError = error
+       // Disposal clears current ownership before it closes the generation, so
+@@ -367,7 +401,10 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
+       async request(request, exec): Promise<JsonValue> {
+         const generation = client
+         if (!generation || connectedAt === undefined) throw new Error(`${label}: server is disconnected`)
+-        const options = { signal: exec.signal, timeout: config.toolCallTimeoutMs }
++        // Resources stay fetch-always: `defaultCacheTtlMs` governs the tool
++        // catalog, and `'bypass'` keeps a resource body from ever being served
++        // out of the response cache.
++        const options = { signal: exec.signal, timeout: config.toolCallTimeoutMs, cacheMode: 'bypass' as const }
+         switch (request.method) {
+           case 'resources/list':
+             return await generation.listResources(
+diff --git a/packages/mcp/mcp-client/src/tools.ts b/packages/mcp/mcp-client/src/tools.ts
+index 9e7b5c0ab5..84a1482b1c 100644
+--- a/packages/mcp/mcp-client/src/tools.ts
++++ b/packages/mcp/mcp-client/src/tools.ts
+@@ -30,6 +30,15 @@ export interface ToolBridgeOptions {
+   registrationFailure: 'contain' | 'throw'
+   serverName: string
+   toolCallTimeoutMs: number
++  /**
++   * Cache disposition for this synchronization's `tools/list`. `'refresh'`
++   * always lists again — the initial connect, and every re-sync a
++   * server-reported change asked for. `'use'` may serve a still-fresh catalog
++   * that the previous transport generation listed, which is what a reconnect
++   * uses so that a flapping or slow server does not force a fresh list on
++   * every attempt.
++   */
++  cacheMode: 'refresh' | 'use'
+ }
+ 
+ /** State for one sync generation: the current set of disposers keyed by public name. */
+@@ -102,6 +111,10 @@ export function publicToolName(serverName: string, rawName: string): string {
+  *    synchronization may propagate the conflict so its parent transaction
+  *    rejects; ordinary clients and later re-syncs return an empty map.
+  *
++ * The fetch phase honours `opts.cacheMode`: `'refresh'` always lists again,
++ * while `'use'` lets the SDK serve the catalog this server last listed, when
++ * that entry is still fresh.
++ *
+  * @param client - Connected MCP Client instance used to list and call tools.
+  * @param ctx - Cordis context providing the `tools` service for registration.
+  * @param opts - Bridge options: server namespace and per-call timeout.
+@@ -120,7 +133,7 @@ export async function syncTools(
+   const definitions = new Map<string, ToolDefinition>()
+   const response = client.getServerCapabilities()?.tools === undefined
+     ? { tools: [] }
+-    : await client.listTools(undefined, { cacheMode: 'refresh' })
++    : await client.listTools(undefined, { cacheMode: opts.cacheMode })
+   for (const tool of response.tools) {
+     const publicName = publicToolName(opts.serverName, tool.name)
+     if (definitions.has(publicName)) {
+diff --git a/packages/mcp/mcp-client/tests/apply.spec.ts b/packages/mcp/mcp-client/tests/apply.spec.ts
+index fff238923f..655b44924e 100644
+--- a/packages/mcp/mcp-client/tests/apply.spec.ts
++++ b/packages/mcp/mcp-client/tests/apply.spec.ts
+@@ -37,7 +37,8 @@ const { mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotification
+   return { mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotificationHandler, MockClient }
+ })
+ 
+-vi.mock('@modelcontextprotocol/client', () => ({
++vi.mock('@modelcontextprotocol/client', async importOriginal => ({
++  ...await importOriginal<typeof import('@modelcontextprotocol/client')>(),
+   Client: MockClient,
+   StreamableHTTPClientTransport: vi.fn(),
+ }))
+diff --git a/packages/mcp/mcp-client/tests/fixture-server.ts b/packages/mcp/mcp-client/tests/fixture-server.ts
+index 021bcfbd43..005be49df0 100644
+--- a/packages/mcp/mcp-client/tests/fixture-server.ts
++++ b/packages/mcp/mcp-client/tests/fixture-server.ts
+@@ -5,14 +5,24 @@
+  * Run: node fixture-server.ts
+  */
+ 
++import { existsSync, readFileSync } from 'node:fs'
+ import { McpServer, type CallToolResult } from '@modelcontextprotocol/server'
+ import { serveStdio } from '@modelcontextprotocol/server/stdio'
+ import { z } from 'zod'
+ 
+ function createFixtureServer(): McpServer {
++  // A positive FIXTURE_TOOLS_TTL_MS makes the fixture declare its catalog
++  // cacheable (SEP-2549). The framework's own default is the protocol's
++  // `ttlMs: 0`, "immediately stale".
++  const declaredTtlMs = Number(process.env.FIXTURE_TOOLS_TTL_MS)
+   const server = new McpServer(
+     { name: 'fixture-server', version: '1.0.0' },
+-    { capabilities: { tools: { listChanged: true } } },
++    {
++      capabilities: { tools: { listChanged: true } },
++      ...(Number.isSafeInteger(declaredTtlMs) && declaredTtlMs > 0
++        ? { cacheHints: { 'tools/list': { ttlMs: declaredTtlMs } } }
++        : {}),
++    },
+   )
+ 
+   server.registerTool('add', {
+@@ -72,6 +82,19 @@ function createFixtureServer(): McpServer {
+   }, async (): Promise<CallToolResult> => ({
+     content: [{ type: 'text', text: 'reset done' }],
+   }))
++
++  // Optional extra tool, so a test can tell a fresh `tools/list` from a catalog
++  // reused across a reconnect: each respawned generation re-reads the file.
++  const markerFile = process.env.FIXTURE_TOOLS_MARKER_FILE
++  if (markerFile !== undefined && existsSync(markerFile) && readFileSync(markerFile, 'utf8').includes('revived')) {
++    server.registerTool('revived', {
++      title: 'Revived Tool',
++      description: 'Exists only in a generation that listed tools after the marker changed.',
++      inputSchema: z.object({}),
++    }, async (): Promise<CallToolResult> => ({
++      content: [{ type: 'text', text: 'revived' }],
++    }))
++  }
+   return server
+ }
+ 
+diff --git a/packages/mcp/mcp-client/tests/mcp-client.e2e.ts b/packages/mcp/mcp-client/tests/mcp-client.e2e.ts
+index a82105d977..d3bb09119a 100644
+--- a/packages/mcp/mcp-client/tests/mcp-client.e2e.ts
++++ b/packages/mcp/mcp-client/tests/mcp-client.e2e.ts
+@@ -85,6 +85,13 @@ function textOf(block: unknown): string {
+   throw new Error(`expected a text content block, got ${JSON.stringify(block)}`)
+ }
+ 
++/** Capture the supervisor's info lines, which report a completed re-sync. */
++function captureInfos(ctx: Context): string[] {
++  const infos: string[] = []
++  ctx.logger.info = ((message: unknown) => { infos.push(String(message)) }) as typeof ctx.logger.info
++  return infos
++}
++
+ let callSeq = 0
+ function nextCallId(): ToolCallId {
+   return ToolCallId(`e2e-${++callSeq}`)
+@@ -239,13 +246,17 @@ describe('fixture server — disposal', () => {
+ })
+ 
+ describe('fixture server — crash recovery', () => {
+-  function crashConfig(serverName: string, reconnect: NonNullable<Config['reconnect']>): Config {
++  function crashConfig(
++    serverName: string,
++    reconnect: NonNullable<Config['reconnect']>,
++    env: Record<string, string> = {},
++  ): Config {
+     return {
+       transport: 'stdio',
+       serverName,
+       command: process.execPath,
+       args: [fixtureServerPath],
+-      env: {},
++      env,
+       cwd: packageDir,
+       toolCallTimeoutMs: 15_000,
+       failOnStartupError: false,
+@@ -317,6 +328,76 @@ describe('fixture server — crash recovery', () => {
+ 
+     await ctx.fiber.dispose()
+   }, 30_000)
++
++  /** Crash one fixture server and wait for the supervisor to finish re-syncing. */
++  async function crashAndAwaitResync(ctx: Context, infos: string[], serverName: string): Promise<void> {
++    const resyncs = (): number => infos.filter(line => line.includes('reconnected and re-synced tools')).length
++    const before = resyncs()
++    await ctx.tools.execute({
++      signal: testToolSignal,
++      callId: nextCallId(), name: `mcp__${serverName}__crash`, arguments: {},
++    })
++    await vi.waitFor(() => { expect(resyncs()).toBe(before + 1) }, { timeout: 15_000, interval: 100 })
++  }
++
++  /**
++   * Run one catalog-reuse scenario. The respawned server advertises one more
++   * tool than its first generation, and only a fresh `tools/list` can see it,
++   * so whether the completed re-sync saw that tool is the whole measurement.
++   */
++  async function reuseScenario(options: {
++    serverName: string
++    reconnect: NonNullable<Config['reconnect']>
++    declaredTtlMs?: string
++  }): Promise<{ revived: boolean; logs: string }> {
++    const dir = await mkdtemp(join(tmpdir(), 'mcp-catalog-e2e-'))
++    const marker = join(dir, 'tools.txt')
++    await writeFile(marker, 'first generation')
++    const ctx = await mountRegistry()
++    const infos = captureInfos(ctx)
++    const name = (suffix: string): string => `mcp__${options.serverName}__${suffix}`
++    try {
++      await apply(ctx, crashConfig(options.serverName, options.reconnect, {
++        FIXTURE_TOOLS_MARKER_FILE: marker,
++        ...options.declaredTtlMs === undefined ? {} : { FIXTURE_TOOLS_TTL_MS: options.declaredTtlMs },
++      }))
++      expect(ctx.tools.get(name('add'))).toBeDefined()
++      expect(ctx.tools.get(name('revived'))).toBeUndefined()
++
++      await writeFile(marker, 'revived')
++      await crashAndAwaitResync(ctx, infos, options.serverName)
++      return { revived: ctx.tools.get(name('revived')) !== undefined, logs: infos.join('\n') }
++    } finally {
++      await ctx.fiber.dispose()
++      await sleep(200)
++      await rm(dir, { recursive: true, force: true })
++    }
++  }
++
++  const fastReconnect: NonNullable<Config['reconnect']> = { initialDelayMs: 50, maxDelayMs: 500, maxAttempts: 40 }
++
++  it('reuses the catalog across a reconnect when the server declares it cacheable', async () => {
++    const { revived, logs } = await reuseScenario({
++      serverName: 'reuse', reconnect: fastReconnect, declaredTtlMs: '60000',
++    })
++    expect(revived, logs).toBe(false)
++  }, 30_000)
++
++  it('lists again on a reconnect when the server declares no cache lifetime', async () => {
++    // A server that declares nothing gets the protocol's conservative
++    // default (ttlMs 0, "immediately stale") from the server framework.
++    const { revived, logs } = await reuseScenario({ serverName: 'nocache', reconnect: fastReconnect })
++    expect(revived, logs).toBe(true)
++  }, 30_000)
++
++  it('lists again on a reconnect when catalog reuse is disabled', async () => {
++    const { revived, logs } = await reuseScenario({
++      serverName: 'reuseoff',
++      reconnect: { ...fastReconnect, catalogReuseTtlMs: 0 },
++      declaredTtlMs: '60000',
++    })
++    expect(revived, logs).toBe(true)
++  }, 30_000)
+ })
+ 
+ // ---- @modelcontextprotocol/server-everything ----
+diff --git a/packages/mcp/mcp-client/tests/mcp-client.spec.ts b/packages/mcp/mcp-client/tests/mcp-client.spec.ts
+index 4a330850b8..04032dcacd 100644
+--- a/packages/mcp/mcp-client/tests/mcp-client.spec.ts
++++ b/packages/mcp/mcp-client/tests/mcp-client.spec.ts
+@@ -138,6 +138,7 @@ const defaultOpts: ToolBridgeOptions = {
+   registrationFailure: 'contain',
+   serverName: 'srv',
+   toolCallTimeoutMs: 60_000,
++  cacheMode: 'refresh',
+ }
+ 
+ // ---- Tests ----
+@@ -194,6 +195,16 @@ describe('syncTools', () => {
+     expect(ctx.tools.get('add')).toBeUndefined()
+   })
+ 
++  it('forwards the synchronization cache disposition to tools/list', async () => {
++    const client = createMockClient([{ name: 'add', inputSchema: { type: 'object' } }])
++
++    await syncTools(client as never, ctx, { ...defaultOpts, cacheMode: 'use' }, new Map())
++    expect(client.listTools).toHaveBeenLastCalledWith(undefined, { cacheMode: 'use' })
++
++    await syncTools(client as never, ctx, { ...defaultOpts, cacheMode: 'refresh' }, new Map())
++    expect(client.listTools).toHaveBeenLastCalledWith(undefined, { cacheMode: 'refresh' })
++  })
++
+   it('lets two servers publish the same raw name side by side', async () => {
+     const clientA = createMockClient([{ name: 'search', inputSchema: { type: 'object' } }])
+     const clientB = createMockClient([{ name: 'search', inputSchema: { type: 'object' } }])
+diff --git a/packages/mcp/mcp-client/tests/reconnect.spec.ts b/packages/mcp/mcp-client/tests/reconnect.spec.ts
+index f41670178c..0a615a2415 100644
+--- a/packages/mcp/mcp-client/tests/reconnect.spec.ts
++++ b/packages/mcp/mcp-client/tests/reconnect.spec.ts
+@@ -10,16 +10,22 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+ import ToolRuntime from '@deepseek-ai/dsh-tools'
+ import McpResources from '@deepseek-ai/dsh-mcp-resources'
+ import { ToolCallId } from '@deepseek-ai/dsh-llm'
++import { InMemoryResponseCacheStore, MAX_CACHE_TTL_MS } from '@modelcontextprotocol/client'
+ import type { Config } from '@deepseek-ai/dsh-mcp-client'
+ 
+ // ---- Mock MCP SDK ----
+ 
+ // vi.mock factories are hoisted above every import/const, so the mock fns and
+ // class must be created inside vi.hoisted to exist when the factories run.
+-const { mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotificationHandler, MockClient, instances } = vi.hoisted(() => {
++const {
++  mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotificationHandler,
++  MockClient, instances, clientOptions,
++} = vi.hoisted(() => {
+   const mockConnect = vi.fn<() => Promise<void>>()
+   const mockClose = vi.fn<() => Promise<void>>()
+-  const mockListTools = vi.fn<(_params?: Record<string, unknown>) => Promise<unknown>>()
++  const mockListTools = vi.fn<(
++    _params?: Record<string, unknown>, _options?: { cacheMode?: string },
++  ) => Promise<unknown>>()
+   const mockCallTool = vi.fn<(
+     _params?: Record<string, unknown>, _options?: unknown,
+   ) => Promise<unknown>>()
+@@ -34,13 +40,22 @@ const { mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotification
+     listResources = async () => ({ resources: [] })
+     listTools = mockListTools
+     callTool = mockCallTool
+-    constructor(_info: unknown, options: { listChanged: { tools: { onChanged: () => void } } }) {
++    constructor(
++      _info: unknown,
++      options: {
++        listChanged: { tools: { onChanged: () => void } }
++        responseCacheStore?: unknown
++        defaultCacheTtlMs?: number
++      },
++    ) {
+       instances.push(this)
++      clientOptions.push(options)
+       mockSetNotificationHandler('notifications/tools/list_changed', options.listChanged.tools.onChanged)
+     }
+   }
+   const instances: MockClient[] = []
+-  return { mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotificationHandler, MockClient, instances }
++  const clientOptions: { responseCacheStore?: unknown; defaultCacheTtlMs?: number }[] = []
++  return { mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotificationHandler, MockClient, instances, clientOptions }
+ })
+ 
+ vi.mock('@modelcontextprotocol/client', async importOriginal => ({
+@@ -124,6 +139,7 @@ describe('reconnect supervisor', () => {
+   beforeEach(async () => {
+     vi.clearAllMocks()
+     instances.length = 0
++    clientOptions.length = 0
+     mockConnect.mockResolvedValue(undefined)
+     mockClose.mockImplementation(function (this: { onclose?: () => void }) {
+       this.onclose?.()
+@@ -570,6 +586,82 @@ describe('reconnect supervisor', () => {
+   })
+ })
+ 
++describe('catalog reuse across reconnects', () => {
++  let ctx: Context
++
++  beforeEach(async () => {
++    vi.clearAllMocks()
++    instances.length = 0
++    clientOptions.length = 0
++    mockConnect.mockResolvedValue(undefined)
++    mockClose.mockImplementation(function (this: { onclose?: () => void }) {
++      this.onclose?.()
++      return Promise.resolve()
++    })
++    mockListTools.mockResolvedValue(listing('remote'))
++    mockCallTool.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] })
++    ctx = await mountRegistry()
++  })
++
++  it('lists afresh on connect and on a reported change, but reuses on a reconnect', async () => {
++    const config = stdioConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 5 })
++    const handle = startConnection(ctx, config, resolveReconnectPolicy(config.reconnect, 'reconnect'))
++    try {
++      await handle.ready
++      expect(mockListTools).toHaveBeenNthCalledWith(1, undefined, { cacheMode: 'refresh' })
++
++      instances[0]!.onclose?.()
++      await vi.waitFor(() => { expect(mockListTools).toHaveBeenCalledTimes(2) })
++      expect(mockListTools).toHaveBeenNthCalledWith(2, undefined, { cacheMode: 'use' })
++
++      // A server-reported change after a reconnect still lists afresh: the
++      // second generation's handler is the live one.
++      const notify = mockSetNotificationHandler.mock.calls[1]![1] as () => void
++      notify()
++      await vi.waitFor(() => { expect(mockListTools).toHaveBeenCalledTimes(3) })
++      expect(mockListTools).toHaveBeenNthCalledWith(3, undefined, { cacheMode: 'refresh' })
++    } finally {
++      await handle.dispose()
++      await ctx.fiber.dispose()
++    }
++  })
++
++  it('shares one response cache across generations and applies the reuse window', async () => {
++    const config = stdioConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 5, catalogReuseTtlMs: 1234 })
++    const handle = startConnection(ctx, config, resolveReconnectPolicy(config.reconnect, 'reconnect'))
++    try {
++      await handle.ready
++      instances[0]!.onclose?.()
++      await vi.waitFor(() => { expect(instances).toHaveLength(2) })
++
++      expect(clientOptions).toHaveLength(2)
++      expect(clientOptions[0]!.defaultCacheTtlMs).toBe(1234)
++      expect(clientOptions[1]!.defaultCacheTtlMs).toBe(1234)
++      expect(clientOptions[0]!.responseCacheStore).toBeInstanceOf(InMemoryResponseCacheStore)
++      // One cache, not one per generation: a fresh store per generation could
++      // never serve the catalog the previous generation listed.
++      expect(clientOptions[1]!.responseCacheStore).toBe(clientOptions[0]!.responseCacheStore)
++    } finally {
++      await handle.dispose()
++      await ctx.fiber.dispose()
++    }
++  })
++
++  it('never reuses when the reuse window is zero', async () => {
++    const config = stdioConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 5, catalogReuseTtlMs: 0 })
++    const handle = startConnection(ctx, config, resolveReconnectPolicy(config.reconnect, 'reconnect'))
++    try {
++      await handle.ready
++      instances[0]!.onclose?.()
++      await vi.waitFor(() => { expect(mockListTools).toHaveBeenCalledTimes(2) })
++      expect(mockListTools).toHaveBeenNthCalledWith(2, undefined, { cacheMode: 'refresh' })
++    } finally {
++      await handle.dispose()
++      await ctx.fiber.dispose()
++    }
++  })
++})
++
+ // ---- Policy resolution ----
+ 
+ describe('resolveReconnectPolicy', () => {
+@@ -583,9 +675,9 @@ describe('resolveReconnectPolicy', () => {
+ 
+   it('keeps explicit values', () => {
+     expect(resolveReconnectPolicy(
+-      { enabled: false, initialDelayMs: 1, maxDelayMs: 2, maxAttempts: 7 },
++      { enabled: false, initialDelayMs: 1, maxDelayMs: 2, maxAttempts: 7, catalogReuseTtlMs: 4 },
+       path,
+-    )).toEqual({ enabled: false, initialDelayMs: 1, maxDelayMs: 2, maxAttempts: 7 })
++    )).toEqual({ enabled: false, initialDelayMs: 1, maxDelayMs: 2, maxAttempts: 7, catalogReuseTtlMs: 4 })
+   })
+ 
+   it('rejects unknown keys', () => {
+@@ -609,6 +701,16 @@ describe('resolveReconnectPolicy', () => {
+     expect(() => resolveReconnectPolicy({ maxAttempts: 1.5 }, path)).toThrow(/maxAttempts must be a positive integer/)
+   })
+ 
++  it('accepts a zero reuse window and rejects one outside the cache ceiling', () => {
++    expect(resolveReconnectPolicy({ catalogReuseTtlMs: 0 }, path).catalogReuseTtlMs).toBe(0)
++    expect(() => resolveReconnectPolicy({ catalogReuseTtlMs: -1 }, path))
++      .toThrow(/catalogReuseTtlMs must be a non-negative finite number/)
++    expect(() => resolveReconnectPolicy({ catalogReuseTtlMs: Number.POSITIVE_INFINITY }, path))
++      .toThrow(/catalogReuseTtlMs must be a non-negative finite number/)
++    expect(() => resolveReconnectPolicy({ catalogReuseTtlMs: MAX_CACHE_TTL_MS + 1 }, path))
++      .toThrow(/catalogReuseTtlMs must be no greater than/)
++  })
++
+   it('apply fails loud at load on a misconfigured reconnect', async () => {
+     const ctx = await mountRegistry()
+     await expect(apply(ctx, stdioConfig({ initialDelayMs: 100, maxDelayMs: 5 })))
