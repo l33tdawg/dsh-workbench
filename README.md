@@ -1,5 +1,30 @@
 # dsh-workbench 
 
+Plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness),
+written by someone running it on real coding work rather than on demonstrations.
+Each one closes a specific gap where an agent can finish a task without having
+established that the work is real: an edit whose landing it never saw, a "done"
+that no check gated, a claim asserted from memory, an approval question answered
+for the tenth time in one session.
+
+They are small, they are independent, and none of them is a framework. Install
+[`dsh-uplift`](packages/dsh-uplift) to mount the pack together, install one
+package on its own, or read the table below and take only the loop you actually
+have.
+
+Where to start:
+
+- **Running Harness and want the reliability plugins?** Install
+  [`dsh-uplift`](packages/dsh-uplift), and read
+  [Why these plugins exist](#why-these-plugins-exist) for the premise behind them.
+- **Want the same MCP servers in Harness as in your other agent tools?** The root
+  package does that from the workspace's own `.mcp.json`; see
+  [Install](#install) and [Configuration](#configuration).
+- **Want the evidence?** [The scorecard](research/SCORECARD.md) tracks what has
+  been built, what has been measured, and what has not.
+- **Hit the same wall?** Sixteen reports and comments have been filed against
+  Harness itself, indexed in [`patches/`](patches/UPSTREAM-REPORTS.md).
+
 Register the MCP servers a **workspace** declares in `.mcp.json` with DeepSeek
 Harness — through Harness's own `mcp-client`, not a reimplementation.
 
@@ -37,11 +62,9 @@ install, but one session holds 30.1% of the events and the
 is not evidence about the harness. Install these because the loops are worth
 closing, not because that has been demonstrated to make the model better.
 
-## What is in this repository
+## Plugins in this repository
 
-The root package is the workspace-mcp plugin, which is what the rest of this
-file documents. The same checkout is where the rest of the work lives. Each
-package below carries its own README; the directories name their entry point:
+Every package carries its own README, and the directory name is the entry point.
 
 | Package | What it does |
 | --- | --- |
@@ -53,6 +76,8 @@ package below carries its own README; the directories name their entry point:
 | [`dsh-check-claims`](packages/dsh-check-claims) | Turns a countable claim into a command with an exact answer, against the working tree or a named revision. |
 | [`dsh-compaction-todo`](packages/dsh-compaction-todo) | Restores saved task state after compaction without duplicate reminders; optionally adds `workflow_context` for the objective, constraints, decisions and remaining checks. |
 | [`dsh-approval-memory`](packages/dsh-approval-memory) | Answers the approval waterfall from command-prefix rules, and for the rest of a session once a human has allowed one escalation of that kind. |
+
+## The rest of the repository
 
 Three directories hold the rest:
 
@@ -91,7 +116,7 @@ baseline and passing plugin tests do not establish improved model quality, for
 the attribution reason given [above](#why-these-plugins-exist).
 After replacing installed plugin code, restart Harness to load the new modules.
 
-## Why this exists
+## Why workspace-mcp exists
 
 Harness reads MCP server configuration only from its own loader configuration
 (`cordis.patch.yml` and profile patches). Its `mcp-client` package requires one
@@ -106,7 +131,7 @@ Upstream cannot take this as a patch: `deepseek-harness` states that it does not
 accept external pull requests, and directs changes of this kind to the plugin
 ecosystem. This is that plugin.
 
-## A SAGE agent per workspace
+## SAGE integration
 
 ### Reuse the running SAGE service
 
@@ -231,7 +256,7 @@ for what that does and does not reach.
 | `env` | `{}` | Values `${env:NAME}` may resolve to, **only** consulted when `allowEnv` is true. |
 | `envOverrides` | `{}` | Values forced onto every spawned server, overriding what the file declares. |
 | `perAgent` | `false` | Mount once per live root agent, in that agent's scope, from the workspace its session recorded. |
-| `sage` | unset | SAGE integration. `{}` mounts one SAGE server per workspace over stdio; `url` with `tokenDirectory` uses the running SAGE HTTP service instead. See [A SAGE agent per workspace](#a-sage-agent-per-workspace). |
+| `sage` | unset | SAGE integration. `{}` mounts one SAGE server per workspace over stdio; `url` with `tokenDirectory` uses the running SAGE HTTP service instead. See [SAGE integration](#sage-integration). |
 | `clientModule` | unset | The `@deepseek-ai/dsh-mcp-client` namespace to mount. See below. |
 | `verbose` | `false` | Log every file read and every server mounted. |
 | `toolCallTimeoutMs` | `60000` | Timeout for one tool call or resource request. |
