@@ -1,6 +1,6 @@
 {
   "name": "@l33tdawg/dsh-workspace-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Register the MCP servers a workspace declares in .mcp.json with DeepSeek Harness, through its own mcp-client.",
   "keywords": [
     "dsh-plugin",
