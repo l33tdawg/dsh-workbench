@@ -41,6 +41,7 @@ verified byte-identical to the posted body. The analysis and evidence behind it 
 
 | Discussion | Comment | Filed |
 |---|---|---|
+| [8630](https://github.com/deepseek-ai/deepseek-harness/discussions/8630#discussioncomment-18727962) | Answer to a comment proposing a `tools/pre-execute` permission gate for the same exfil path: a gate classifies what the agent asks for while the sandbox denies what the process does, so the two are layers rather than substitutes — and the read-protection half of that plugin addresses something this report does not | yes |
 | [8635](https://github.com/deepseek-ai/deepseek-harness/discussions/8635#discussioncomment-18726817) | The reload boundary, from the shipped `dsh-hmr` watches plus the session logs: root-composition writes land in a running session in seconds, a preset's own definition waits for the next mount; corrects the third event's "manifest-only" attribution and narrows what strands agents | yes |
 | [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18713176) | The same archive path also suppresses the model-facing skill catalog, because the watcher's `stat` throws before discovery runs; adds the `standard` vs `cordis` measurement | yes |
 | [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18715981) | Answer to a comment that attributed the loss to a written `includeDefaultRoots: false`; the field is not written and its schema default is already `true`, so the symptom cannot establish the value | yes |
