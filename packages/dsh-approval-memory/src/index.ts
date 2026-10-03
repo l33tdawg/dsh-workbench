@@ -40,6 +40,7 @@ import { join } from 'node:path'
 
 import type { Context } from '@deepseek-ai/cordis'
 
+import { sessionGrantBasis } from './grant.ts'
 import { commandFrom, matchCommand, parseRules } from './rules.ts'
 import type { Rule } from './rules.ts'
 
@@ -64,6 +65,11 @@ export interface Config {
   logFile?: string
   /** Rules written in the profile patch layer, merged before the file's. */
   rules?: Rule[]
+  /**
+   * Tools whose sandbox escalations are answered for the rest of a session once
+   * a human has allowed one. Empty (the default) keeps every ask going to the user.
+   */
+  sessionGrant?: string[]
 }
 
 /** Configuration with every default applied. */
@@ -72,6 +78,7 @@ export interface ResolvedConfig {
   rulesFile: string
   logFile: string
   rules: Rule[]
+  sessionGrant: string[]
 }
 
 /** The approval request fields this plugin reads. */
@@ -79,6 +86,7 @@ interface ApprovalRequestLike {
   agent: { id: string }
   toolName: string
   callId?: string
+  reason?: string
   signal?: AbortSignal
 }
 
@@ -96,7 +104,14 @@ interface SessionLike {
 /** The subset of a session event this plugin reads. */
 interface EventLike {
   type: string
-  data?: { callId?: string, arguments?: string }
+  data?: {
+    id?: string
+    toolName?: string
+    reason?: string
+    callId?: string
+    arguments?: string
+    outcome?: string
+  }
 }
 
 /**
@@ -115,11 +130,16 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
   const home = join(homedir(), '.dsh')
   const inline = config.rules ?? []
   if (!Array.isArray(inline)) throw new Error('approval-memory: rules must be an array')
+  const sessionGrant = config.sessionGrant ?? []
+  if (!Array.isArray(sessionGrant) || sessionGrant.some(tool => typeof tool !== 'string' || tool.trim() === '')) {
+    throw new Error('approval-memory: sessionGrant must be an array of tool names')
+  }
   return {
     enabled: config.enabled ?? true,
     rulesFile: path(config.rulesFile, join(home, 'approval-rules.json'), 'rulesFile'),
     logFile: path(config.logFile, join(home, 'approval-memory.log'), 'logFile'),
     rules: inline,
+    sessionGrant,
   }
 }
 
@@ -173,12 +193,16 @@ export function apply(ctx: Context, config: Config = {}): void {
     return cache.rules
   }
 
-  /** The command a pending call carries, read from the session log by call id. */
-  const pendingCommand = (req: ApprovalRequestLike, field: string): string | undefined => {
-    if (req.callId === undefined) return undefined
+  /** The requesting session's own events, or an empty list when it is not readable. */
+  const sessionEvents = (req: ApprovalRequestLike): readonly EventLike[] => {
     const session = sessions?.get(req.agent.id)
-    if (session === undefined) return undefined
-    const events = session.ownEvents?.() ?? session.snapshotEvents?.() ?? []
+    if (session === undefined) return []
+    return session.ownEvents?.() ?? session.snapshotEvents?.() ?? []
+  }
+
+  /** The command a pending call carries, read from the session log by call id. */
+  const pendingCommand = (events: readonly EventLike[], req: ApprovalRequestLike, field: string): string | undefined => {
+    if (req.callId === undefined) return undefined
     for (let index = events.length - 1; index >= 0; index--) {
       const event = events[index]
       if (event?.type !== 'tool/call') continue
@@ -192,8 +216,8 @@ export function apply(ctx: Context, config: Config = {}): void {
   ctx.on('approval/request', async (req: ApprovalRequestLike, next: () => Promise<string>) => {
     try {
       if (req.signal?.aborted === true) return await next()
+      const events = sessionEvents(req)
       const rules = [...fileRules(), ...resolved.rules]
-      if (rules.length === 0) return await next()
 
       // Rules may read different argument fields, and a field is part of what a
       // rule asserts: a prefix about `command` must not be matched against the
@@ -207,7 +231,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         byField.set(field, bucket)
       }
       for (const [field, bucket] of byField) {
-        const command = pendingCommand(req, field)
+        const command = pendingCommand(events, req, field)
         if (command === undefined) continue
         const matched = matchCommand(bucket, req.toolName, command)
         if (matched === undefined) continue
@@ -219,6 +243,21 @@ export function apply(ctx: Context, config: Config = {}): void {
           ...(matched.segments === undefined ? {} : { segments: matched.segments }),
           field,
           command,
+          agent: req.agent.id,
+        })
+        return 'allowed-once'
+      }
+
+      // A session grant is deliberately checked after the rules: a rule is a
+      // standing decision about a command, while this is one about a kind of ask.
+      const basis = sessionGrantBasis(events, req, resolved.sessionGrant)
+      if (basis !== undefined) {
+        write({
+          event: 'allowed',
+          via: 'session-grant',
+          tool: req.toolName,
+          mode: basis.mode,
+          basis: basis.askId,
           agent: req.agent.id,
         })
         return 'allowed-once'

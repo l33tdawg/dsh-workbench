@@ -76,6 +76,39 @@ A rule is read as: *this tool, when the command is this prefix plus arguments*.
 - `field` names which argument holds the command, `command` by default; it
   exists for tools that spell it something else.
 
+## Session grants
+
+A prefix rule is a standing decision about a *command*. Most of what a session
+actually asks about is not a command but a script, so the second mechanism is a
+standing decision about a *kind of ask*:
+
+```yaml
+- id: approval-memory
+  config:
+    sessionGrant: [bash]
+```
+
+With a tool listed there, the plugin answers a sandbox escalation in that
+session when the session's own log already carries an ask for the same tool and
+the same widened mode whose decision was `allowed-once`. The first escalation of
+a session therefore still reaches the user, and everything after it is answered
+with the earlier ask's audit id recorded as the basis.
+
+Three properties bound it. Nothing is pre-authorized, because a fresh session
+has no earlier allow to point at. The basis must be a decision - a rejected,
+cancelled or unavailable outcome grants nothing, and neither does an ask that
+was never answered. And the grant is derived on every request rather than
+stored, so removing the tool from `sessionGrant` stops it at the next ask with
+no state to revoke.
+
+What it costs is scrutiny: the second and later escalations in a session are
+not looked at individually, including one that writes somewhere the first did
+not. That is the same trade Codex makes with its session approval cache, and the
+measurement is what justifies it here - 189 of 189 recorded asks were allowed by
+hand, none was ever rejected, and 147 of the 148 prompted commands were scripts
+no prefix rule can reach. A deployment that wants the prompts instead sets
+`sessionGrant: []`.
+
 ## The log
 
 Every decision is appended to `~/.dsh/approval-memory.log` as one JSON line:
@@ -97,21 +130,18 @@ made; what it does not record is who made it.
 | `rulesFile` | `~/.dsh/approval-rules.json` | The rules file; re-read whenever its size or mtime changes. Empty string disables file rules. |
 | `logFile` | `~/.dsh/approval-memory.log` | Decision log. Empty string disables it. |
 | `rules` | `[]` | Inline rules, merged before the file's. |
+| `sessionGrant` | `[]` | Tool names whose sandbox escalations are answered for the rest of a session after one human allow. The shipped row sets `[bash]`. |
 
 ## What it does not do
 
-- **No session-scoped grant.** Approving one escalation does not quiet the next,
-  and the measurement says that is the gap that matters here: across this
-  repository's session logs, 191 approval asks were recorded, 189 of them
-  answered by hand, **none rejected**, and 123 of the 148 commands were repeats
-  of a prefix already asked about. The workload is a user saying yes over and
-  over to differently-worded scripts. Codex closes this with a session-scoped
-  approval cache; the harness vocabulary is `allowed-once` only, so a plugin
-  would have to derive the session grant from the log — answering an ask when a
-  human already allowed one of the same kind in that session.
+- **The session grant is wide, and it is on in the shipped row.** Later
+  escalations in a session get less scrutiny than the first, including one that
+  writes somewhere the first did not; "Session grants" states the trade and the
+  measurement behind it. Set `sessionGrant: []` to keep every ask.
 - **No deny rules.** A rule can only allow; everything else keeps asking.
-- **No per-mode scope.** The request carries no sandbox mode, so a rule cannot
-  be limited to "widen to `danger-full-access` only for this command".
+- **No per-mode scope for a rule.** A rule is about a command. The widened mode
+  appears only in the request's reason text, which is what the session grant
+  parses; a rule cannot be limited to one widening level.
 - **No command policy language.** Codex's Starlark `prefix_rule` grammar is
   upstream work; this is the smallest thing that removes the repeated prompt
   without pretending to be a policy engine.

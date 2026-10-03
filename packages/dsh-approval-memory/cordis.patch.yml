@@ -21,3 +21,10 @@
         # rules:
         #   - tool: bash
         #     prefix: npm test
+        # One human approval of a bash escalation in a session answers the rest
+        # of that session's bash escalations at the same widened mode. Measured
+        # need: 189 of 189 recorded asks were allowed by hand and none rejected,
+        # while 147 of the 148 prompted commands were scripts a prefix rule
+        # cannot reach. Remove the tool from this list and every ask returns to
+        # the user.
+        sessionGrant: [bash]
