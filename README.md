@@ -126,6 +126,12 @@ Consequences worth knowing:
 pnpm add --dir "$DSH_HOME/profiles/web" /path/to/dsh-workspace-mcp
 ```
 
+The harness's own plugin manager performs those steps too — the Plugins page in
+Settings, or the `install_bundle` action an agent can call with this directory as
+its target — and a newly installed bundle activates in a running app without a
+restart. Replacing an already installed package still needs one, because the
+module has to be imported afresh.
+
 Then add the bundle to the profile manifest's ordered list:
 
 ```json
@@ -134,6 +140,11 @@ Then add the bundle to the profile manifest's ordered list:
 
 Restart Harness. The included `cordis.patch.yml` inserts one `workspace-mcp`
 row; override any of its config fields from the profile patch layer as usual.
+Two things about doing that by hand: a manifest edit that leaves the ordered
+`dsh.profile.bundles` list unchanged is ignored by a running app, and editing
+the patch layer while an app runs recomposes the profile in place — see
+[`patches/FINDING-profile-reload-boundary.md`](patches/FINDING-profile-reload-boundary.md)
+for what that does and does not reach.
 
 ## Configuration
 
@@ -145,6 +156,7 @@ row; override any of its config fields from the profile patch layer as usual.
 | `env` | `{}` | Values `${env:NAME}` may resolve to, **only** consulted when `allowEnv` is true. |
 | `envOverrides` | `{}` | Values forced onto every spawned server, overriding what the file declares. |
 | `perAgent` | `false` | Mount once per live root agent, in that agent's scope, from the workspace its session recorded. |
+| `sage` | unset | SAGE integration. `{}` mounts one SAGE server per workspace over stdio; `url` with `tokenDirectory` uses the running SAGE HTTP service instead. See [A SAGE agent per workspace](#a-sage-agent-per-workspace). |
 | `clientModule` | unset | The `@deepseek-ai/dsh-mcp-client` namespace to mount. See below. |
 | `verbose` | `false` | Log every file read and every server mounted. |
 | `toolCallTimeoutMs` | `60000` | Timeout for one tool call or resource request. |
@@ -222,8 +234,10 @@ pin it explicitly on the loader row:
 
 ```sh
 npm install          # dev dependencies only
-npm test             # 34 tests: mapping, substitution, precedence, and a real
-                     # end-to-end mount that spawns a fixture MCP server
+npm test             # 77 tests: mapping, substitution, precedence, the SAGE
+                     # HTTP credential path, and a real end-to-end mount that
+                     # spawns a fixture MCP server
+npm run typecheck    # parse every package and tool the profile loads directly
 ```
 
 `tests/integration.test.ts` bootstraps the real tool registry and the real
