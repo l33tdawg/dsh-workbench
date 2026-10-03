@@ -16,6 +16,36 @@ Harness — through Harness's own `mcp-client`, not a reimplementation.
 After a restart, that server's tools appear as `mcp__sage__*` in the session,
 exactly as if the server had been configured in the loader configuration.
 
+## What is in this repository
+
+The root package is the workspace-mcp plugin, which is what the rest of this
+file documents. The same checkout is where the rest of the work lives. Each
+package below carries its own README; the directories name their entry point:
+
+| Package | What it does |
+| --- | --- |
+| [`dsh-uplift`](packages/dsh-uplift) | One bundle that installs the reliability pack below. |
+| [`dsh-guidance-pack`](packages/dsh-guidance-pack) | Behavioural prompt guidance: planning, verification, editing constraints, destructive actions, reporting. |
+| [`dsh-apply-patch`](packages/dsh-apply-patch) | A multi-file atomic `apply_patch` — one call, many hunks, all or nothing. |
+| [`dsh-edit-feedback`](packages/dsh-edit-feedback) | Returns the diff Harness already computes to the model, so it knows where its edit landed. |
+| [`dsh-verify-on-edit`](packages/dsh-verify-on-edit) | Runs the project's own check after an edit and reports what the change broke. |
+| [`dsh-check-claims`](packages/dsh-check-claims) | Turns a countable claim into a command with an exact answer, against the working tree or a named revision. |
+| [`dsh-compaction-todo`](packages/dsh-compaction-todo) | Puts the todo list back into context after a compaction, replayed from the durable log. |
+| [`dsh-approval-memory`](packages/dsh-approval-memory) | Answers the approval waterfall from command-prefix rules, and for the rest of a session once a human has allowed one escalation of that kind. |
+
+Three directories hold the rest:
+
+- [`tools/`](tools/README.md) — nine scripts that read the durable session logs
+  and the request budget. `tools/README.md` documents the four whose numbers
+  this repository quotes as evidence; the others are checks and repairs that
+  carry their own headers.
+- [`patches/`](patches/) — six reports, one proposal and five comments filed
+  against `deepseek-harness`, indexed in
+  [`UPSTREAM-REPORTS.md`](patches/UPSTREAM-REPORTS.md), plus the appliers that
+  carry local fixes and the corrections made after filing.
+- [`research/`](research/SCORECARD.md) — the Codex comparison and the
+  measurements behind the pack. The scorecard is the entry point.
+
 ## Why this exists
 
 Harness reads MCP server configuration only from its own loader configuration

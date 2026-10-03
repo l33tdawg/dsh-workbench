@@ -129,10 +129,23 @@ Stated plainly, because an assumed fence is worse than none.
 | `BUG-REPORT-network-egress.md` | The report as filed (with the patch inlined at submission time) |
 | `build-submission.mjs` | Builds the GraphQL payload; keeps the body out of shell quoting |
 | `enable-auto-review.md` | Separate, unrelated: switching on DSH's guardian equivalent |
-| `UPSTREAM-REPORTS.md` | The four remaining upstream reports, not yet filed |
+| `UPSTREAM-REPORTS.md` | The index of everything filed upstream; the documents below are catalogued there |
 
 ## Other patches in this directory
 
 | Patch | Status |
 |---|---|
 | [`mcp-catalog-reuse.patch`](mcp-catalog-reuse.patch), [applier](mcp-catalog-reuse.mjs), [probe](mcp-catalog-reuse-probe.mjs) | Applied and tested in the checkout at `3e6ed5f11f`; filed as [discussion 8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720). See [`FINDING-mcp-catalog-reuse.md`](FINDING-mcp-catalog-reuse.md). |
+| [`enable-cordis-skill-root.mjs`](enable-cordis-skill-root.mjs) | Applied to the desktop profile 2026-10-03: restates the `cordis` preset with its unreadable `customSkillDirs` root replaced, and retires the row [`enable-cordis-skills.mjs`](enable-cordis-skills.mjs) inserts. Reasoning in [`FINDING-cordis-skill-catalog.md`](FINDING-cordis-skill-catalog.md). |
+
+### Documents in this directory
+
+| Document | What it is |
+|---|---|
+| [`UPSTREAM-REPORTS.md`](UPSTREAM-REPORTS.md) | The index: six reports, one proposal and five comments filed, with the corrections made after filing. |
+| `BUG-REPORT-*.md` | Three report bodies as posted, including the 8649 addendum; the other report copies live in [`../research/upstream/`](../research/upstream). |
+| [`FINDING-profile-reload-boundary.md`](FINDING-profile-reload-boundary.md) | What a profile edit does and does not reach in a running session, measured from `dsh-hmr` and the session logs. |
+| [`FINDING-cordis-skill-catalog.md`](FINDING-cordis-skill-catalog.md) | Which gate loses the `cordis` skill catalog, why the watcher is not the cause, and what the repair does. |
+| [`FINDING-mcp-catalog-reuse.md`](FINDING-mcp-catalog-reuse.md) | The MCP catalog reuse change: what was built, the protocol detail that decided it, and what it does not fix. |
+| `COMMENT-*.md` | Four comment bodies as posted: one on 8635 and three on 8649. |
+| [`enable-cordis-skills.md`](enable-cordis-skills.md), [`enable-auto-review.md`](enable-auto-review.md), [`enable-harness-introspection.md`](enable-harness-introspection.md) | Opt-in profile changes, each with the script that applies it. |
