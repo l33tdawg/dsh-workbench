@@ -16,6 +16,27 @@ Harness — through Harness's own `mcp-client`, not a reimplementation.
 After a restart, that server's tools appear as `mcp__sage__*` in the session,
 exactly as if the server had been configured in the loader configuration.
 
+## Why these plugins exist
+
+A coding agent does not see the filesystem. It sees tool results. These plugins
+each close one moment where an agent can end a task without having established
+that the work is real: an edit whose landing it never saw, a "done" that no check
+gated, a counted claim asserted from memory, an approval question answered for
+the tenth time in one session. Each package README explains its own loop; this
+section explains the set.
+
+That failure mode is why the repository exists, and it is not the same as
+feature parity with another harness. The working premise is narrower: a mistake
+is only fixable while the agent can still see it, so the mechanical loops are
+worth closing first, ahead of anything that depends on the model behaving well.
+
+The honest half is that closing a loop has not been shown to lower the mistake
+rate. The undo-class rate did fall from 3.5 to 1.6 per 100 tool calls across the
+install, but one session holds 30.1% of the events and the
+[census](tools/README.md) says outright that a pooled rate one session dominates
+is not evidence about the harness. Install these because the loops are worth
+closing, not because that has been demonstrated to make the model better.
+
 ## What is in this repository
 
 The root package is the workspace-mcp plugin, which is what the rest of this
@@ -65,8 +86,9 @@ permission to take additional actions.
 The [regression cases and evaluation guide](research/RELIABILITY-EVAL.md)
 document what is tested and how to compare coding-task outcomes. The local
 `node tools/reliability-census.mjs --json` report reads session logs without
-uploading transcripts. Missing verification records mean unknown coverage;
-the baseline and passing plugin tests do not establish improved model quality.
+uploading transcripts. Missing verification records mean unknown coverage; the
+baseline and passing plugin tests do not establish improved model quality, for
+the attribution reason given [above](#why-these-plugins-exist).
 After replacing installed plugin code, restart Harness to load the new modules.
 
 ## Why this exists

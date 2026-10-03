@@ -32,7 +32,7 @@ anyone say whether they help.
 | 10 | MCP OAuth and dynamic headers | Not addressed. |
 | 11 | Automatic memory pipeline | Not addressed. |
 | 12 | Execpolicy command rules | Not addressed. |
-| 13 | Approval memory (prefix grants) | Not addressed. |
+| 13 | Approval memory (prefix grants) | **Addressed.** [`dsh-approval-memory`](../packages/dsh-approval-memory) answers the approval waterfall from command-prefix rules. |
 | 14 | Same-turn escalation retry | Not addressed. |
 | 15 | LSP diagnostics fed into the edit loop | Not addressed. |
 | 16 | `request_permissions` with a full profile | Not addressed. |
