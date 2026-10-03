@@ -38,6 +38,14 @@
  * under live sessions and strands their tools (discussion #8635). Without
  * `--force` this refuses while DSH looks like it is running.
  *
+ * SUPERSEDED by `enable-cordis-skill-root.mjs`, which repairs the preset's own
+ * row instead of adding a second provider for it, and retires the row this
+ * script writes. This script stays the owner of that row's text: the successor
+ * runs it in apply mode to put the row back on `--revert`. Its own `--revert`
+ * refuses today, because the BEGIN/END markers now enclose three unrelated
+ * overrides and the block is no longer byte-identical to what this script writes
+ * (verified 2026-10-02); remove the extra lines by hand first if it must run.
+ *
  * Usage:
  *   node enable-cordis-skills.mjs [--check] [--revert] [--force] [profile]
  *
