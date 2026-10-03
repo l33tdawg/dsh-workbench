@@ -79,11 +79,15 @@ Every package carries its own README, and the directory name is the entry point.
 
 ## The rest of the repository
 
-Three directories hold the rest:
+Four directories hold the rest:
 
 - [`tools/`](tools/README.md) — session-log audits, the reliability census,
   request-budget checks and repair utilities. The README explains the reported
   measurements and their limits; individual scripts carry usage headers.
+- [`bench/`](bench/README.md) — the controlled comparison `research/RELIABILITY-EVAL.md`
+  asks for: small fixtures run against two configurations that differ only in
+  which plugins are mounted, with the patch scored against the fixture's own
+  tests. The README states what has and has not been shown.
 - [`patches/`](patches/) — six reports, one proposal and five comments filed
   against `deepseek-harness`, indexed in
   [`UPSTREAM-REPORTS.md`](patches/UPSTREAM-REPORTS.md), plus the appliers that

@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 /** Directories to walk for `.mjs` files, relative to the repo root. */
-const DIRECTORIES = ['tools', 'patches']
+const DIRECTORIES = ['tools', 'patches', 'bench']
 
 /**
  * Plugin packages whose plain-JS TypeScript is checked here.
