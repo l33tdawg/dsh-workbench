@@ -6,7 +6,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,6 +16,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as mcpClient from '@deepseek-ai/dsh-mcp-client'
 import { apply, Config } from '../lib/index.ts'
+import { echoHttp } from './fixtures/echo-http.mjs'
 
 const SERVER_FIXTURE = fileURLToPath(new URL('./fixtures/echo-server.mjs', import.meta.url))
 
@@ -79,6 +80,48 @@ function workspaceWithServer(name, file = '.mcp.json') {
 }
 
 describe('real mcp-client integration', () => {
+  it('connects to an already-running HTTP server using the real Harness client', async () => {
+    const service = await echoHttp()
+    const root = mkdtempSync(join(tmpdir(), 'workspace-mcp-http-'))
+    const key = join(root, 'agent.key')
+    writeFileSync(key, Buffer.alloc(32, 1), { mode: 0o600 })
+    const issuer = fileURLToPath(new URL('./fixtures/token-issuer.mjs', import.meta.url))
+    chmodSync(issuer, 0o755)
+    const ctx = await bootContext()
+    try {
+      await apply(ctx, config({ root, clientModule: mcpClient, sage: {
+        url: service.url, tokenDirectory: join(root, 'tokens'), tokenCommand: issuer,
+        identities: { [root]: key },
+      } }))
+      assert.deepEqual(toolNames(ctx), ['mcp__sage__echo'])
+      const echo = ctx.tools.get('mcp__sage__echo')
+      const result = await echo.execute({ text: 'shared service' }, { signal: new AbortController().signal })
+      assert.match(JSON.stringify(result), /shared service/)
+      assert.ok(service.requests.length >= 3)
+      assert.equal(new Set(service.requests).size, 1)
+    } finally {
+      for (const fiber of fibers.at(-1).started.reverse()) await fiber.dispose()
+      await service.close()
+    }
+  })
+
+  it('contains an unavailable HTTP endpoint without starting a stdio MCP fallback', async () => {
+    const service = await echoHttp()
+    await service.close()
+    const root = mkdtempSync(join(tmpdir(), 'workspace-mcp-http-offline-'))
+    const key = join(root, 'agent.key'), calls = join(root, 'calls.jsonl')
+    writeFileSync(key, Buffer.alloc(32, 1), { mode: 0o600 })
+    const issuer = fileURLToPath(new URL('./fixtures/token-issuer.mjs', import.meta.url))
+    const ctx = await bootContext()
+    await apply(ctx, config({ root, clientModule: mcpClient, sage: {
+      url: service.url, tokenDirectory: join(root, 'tokens'), tokenCommand: issuer,
+      identities: { [root]: key }, env: { FIXTURE_CALLS: calls },
+    } }))
+    assert.deepEqual(toolNames(ctx), [])
+    const commands = readFileSync(calls, 'utf8').trim().split('\n').map(JSON.parse)
+    assert.deepEqual(commands.map(({ command, action }) => [command, action]), [['mcp-token', 'create']])
+  })
+
   it('spawns a workspace-declared server and registers its tool under the server namespace', async () => {
     const root = workspaceWithServer('echoserver')
     const ctx = await bootContext()

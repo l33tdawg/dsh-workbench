@@ -33,6 +33,48 @@ ecosystem. This is that plugin.
 
 ## A SAGE agent per workspace
 
+### Reuse the running SAGE service
+
+For a desktop host, use SAGE's existing HTTP MCP endpoint. This keeps the
+project's approved identity and creates no long-lived `sage-gui mcp` children:
+
+```yaml
+- id: workspace-mcp
+  config:
+    files: ['.dsh/mcp.json']
+    perAgent: true
+    sage:
+      url: http://127.0.0.1:8080/v1/mcp/streamable
+      tokenDirectory: /absolute/private/path/dsh-sage-tokens
+      tokenCommand: /Applications/SAGE.app/Contents/MacOS/sage-gui
+      identities:
+        /absolute/path/to/workspace: /absolute/path/to/existing/agent.key
+```
+
+The existing SAGE node must be healthy and the pinned identity must already be
+approved and managed by that node. At the first mount of a session, the plugin
+runs the short-lived `mcp-token create` CLI under the local operator's authority.
+It caches that session's ordinary-agent bearer in a mode-0600 file under a
+mode-0700 directory; later mounts and restarts reuse it. The MCP client receives
+only that bearer, never the operator's signing key. Omit `tokenCommand` after
+provisioning if this host should only use existing cached credentials.
+
+Tokens are scoped by endpoint, workspace, identity and durable Harness session
+ID. Separate sessions in one project get separate tokens because SAGE scopes
+HTTP conversation state and durable work claims to the bearer. Keep the cache
+across restarts. To rotate a token, revoke the file's `id` with
+`sage-gui mcp-token revoke <id>`, then remove that private cache file before
+remounting the session. Cache files contain credentials: never commit them.
+
+HTTP mode takes precedence over a workspace's `sage` stdio declaration. Missing
+credentials, an unmapped project or a failed connection is reported without
+launching `mcp` or `serve`; other configured MCP servers still mount. A new
+project requires an explicitly pinned, approved identity. Existing bridges from
+older plugin versions are disposed when this mode mounts, and per-agent
+clients now unload when the workspace-mcp plugin is reconfigured.
+
+### Legacy stdio integration
+
 Setting `sage: {}` on the plugin row mounts one
 [SAGE](https://github.com/l33tdawg/sage) MCP server per workspace, so each
 workspace signs as its own agent instead of sharing one brain across projects.
@@ -228,4 +270,3 @@ started in — verified rather than assumed, and the reason `files: ['.mcp.json'
 finds the workspace file and not the profile's own directory. And the plugin's
 diagnostics go to the harness logger: a failed mount appears in the harness's
 logs, not on stdout.
-

@@ -18,6 +18,7 @@
 import { readFileSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { mapConfigDocument, toClientConfig, toClientConfigs } from './map.ts'
+import { sageHttpOrigin, toSageHttpConfig } from './sage-http.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'workspace-mcp'
@@ -49,6 +50,7 @@ const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000
  * @property {Record<string, string>} env Values available to `${env:NAME}` references when permitted.
  * @property {boolean} allowEnv Whether the files may read the harness environment at all.
  * @property {Record<string, string>} envOverrides Values forced on every spawned server.
+ * @property {object} sage SAGE connection policy; url selects the running HTTP service.
  * @property {boolean} perAgent Mount once per live root agent, from that agent's session workspace.
  * @property {unknown} clientModule The `mcp-client` namespace to mount, when a deployment pins one.
  * @property {boolean} verbose Whether to report every file read and server mounted.
@@ -77,6 +79,12 @@ function isStringList(value) {
 /** Whether a value is a usable per-workspace SAGE mount description. */
 function isSageConfig(value) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  if (value.url !== undefined) {
+    if (typeof value.url !== 'string' || typeof value.tokenDirectory !== 'string' || !isAbsolute(value.tokenDirectory)) return false
+    try { sageHttpOrigin(value.url) } catch { return false }
+  }
+  if (value.tokenDirectory !== undefined && typeof value.tokenDirectory !== 'string') return false
+  if (value.tokenCommand !== undefined && (typeof value.tokenCommand !== 'string' || !isAbsolute(value.tokenCommand))) return false
   if (value.command !== undefined && typeof value.command !== 'string') return false
   if (value.args !== undefined && !isStringList(value.args)) return false
   if (value.serverName !== undefined && typeof value.serverName !== 'string') return false
@@ -228,15 +236,43 @@ function asPlugin(clientModule) {
  * its tools before its fiber activates, so awaiting is what makes the tools
  * present once this plugin finishes activating.
  *
- * @param ctx - Plugin context; children unload with it.
+ * @param ctx - Tool scope to mount into.
  * @param clientModule - The `@deepseek-ai/dsh-mcp-client` namespace.
  * @param servers - Complete `mcp-client` configurations to mount, in order.
+ * @param owner - Plugin context that also owns clients mounted in another scope.
  * @returns A promise that settles once every mounted client has activated.
  */
-async function mountServers(ctx, clientModule, servers) {
+async function mountServers(ctx, clientModule, servers, owner = ctx) {
   const plugin = asPlugin(clientModule)
   for (const server of servers) {
-    await ctx.plugin(plugin, server)
+    const fiber = ctx.plugin(plugin, server)
+    // Per-agent clients live in the agent's tool scope, but also belong to this
+    // plugin. Reconfiguration must close them before a replacement mounts.
+    if (owner !== ctx && owner.effect) {
+      try { owner.effect(() => () => fiber.dispose()) }
+      catch (error) { await fiber.dispose(); throw error }
+    }
+    await fiber
+  }
+}
+
+/** Retire bridges mounted by older versions, which outlived a profile-row reload. */
+async function retireLegacySage(target, workspace, sage) {
+  if (!target.registry?.values) return
+  for (const runtime of [...target.registry.values()]) {
+    // Older workspace-mcp wrappers carried no marker. Match that exact wrapper
+    // and its DSH-only configuration, never an arbitrary SAGE process/client.
+    if (typeof runtime.callback !== 'function'
+      || Function.prototype.toString.call(runtime.callback).replace(/\s/g, '') !== '(ctx,config)=>apply(ctx,config)') continue
+    for (const fiber of [...runtime.fibers]) {
+      const config = fiber.config
+      if (fiber.parent.fiber !== target.fiber || config?.transport !== 'stdio'
+        || config.serverName !== (sage.serverName ?? 'sage') || config.cwd !== workspace
+        || config.env?.SAGE_PROVIDER !== 'dsh'
+        || config.command !== (sage.tokenCommand ?? '/Applications/SAGE.app/Contents/MacOS/sage-gui')
+        || config.args?.length !== 1 || config.args[0] !== 'mcp') continue
+      await fiber.dispose()
+    }
   }
 }
 
@@ -336,7 +372,7 @@ function reportDiagnostics(target, diagnostics) {
  * @param logger - Sink for verbose progress, or undefined when not verbose.
  * @returns A promise that settles once every mounted client has activated.
  */
-async function mountWorkspace(target, workspace, config, clientModule, logger) {
+async function mountWorkspace(target, workspace, config, clientModule, logger, sessionId, owner = target) {
   const env = config.allowEnv ? { ...process.env, ...config.env } : undefined
   const context = {
     scope: { workspaceFolder: workspace, cwd: workspace, ...(env === undefined ? {} : { env }) },
@@ -346,17 +382,27 @@ async function mountWorkspace(target, workspace, config, clientModule, logger) {
   const accepted = toClientConfigs(read.entries, context)
   reportDiagnostics(target, [...read.diagnostics, ...accepted.diagnostics])
 
-  const servers = accepted.entries.map((entry) => {
+  const sageName = config.sage?.serverName ?? 'sage'
+  if (config.sage?.url !== undefined) await retireLegacySage(target, workspace, config.sage)
+  // An operator's HTTP policy must not be replaced by a workspace's stdio declaration.
+  const entries = config.sage?.url === undefined ? accepted.entries
+    : accepted.entries.filter((entry) => entry.name !== sageName)
+  const servers = entries.map((entry) => {
     const server = toClientConfig(entry, config.envOverrides, config.toolCallTimeoutMs)
     return server.cwd === undefined || server.cwd === '' ? { ...server, cwd: workspace } : server
   })
-  const sageName = config.sage?.serverName ?? 'sage'
-  // A workspace that declares its own SAGE server wins. Mounting the configured
+  // In legacy stdio mode, a workspace that declares its own SAGE server wins. Mounting the configured
   // one as well would claim the same serverName twice, which `mcp-client`
   // refuses by aborting the boot. The workspace file is also where SAGE itself
   // reads a pinned identity from, so it is the more specific declaration.
   if (config.sage !== undefined && !servers.some((server) => server.serverName === sageName)) {
-    servers.push(toSageConfig(workspace, config.sage, config.toolCallTimeoutMs))
+    try {
+      servers.push(config.sage.url === undefined
+        ? toSageConfig(workspace, config.sage, config.toolCallTimeoutMs)
+        : await toSageHttpConfig(workspace, config.sage, config.toolCallTimeoutMs, sessionId))
+    } catch (error) {
+      target.logger.error('[workspace-mcp] SAGE HTTP unavailable: %s', error.message)
+    }
   } else if (config.sage !== undefined) {
     logger?.(`SAGE server declared by the workspace as "${sageName}"; using it instead of the configured default`)
   }
@@ -365,7 +411,7 @@ async function mountWorkspace(target, workspace, config, clientModule, logger) {
     return
   }
 
-  await mountServers(target, clientModule, servers)
+  await mountServers(target, clientModule, servers, owner)
   logger?.(`mounted ${servers.length} server(s) for ${workspace}`)
 }
 
@@ -406,7 +452,8 @@ export async function apply(ctx, config) {
     const mountAgent = (agent) => {
       if (mounted.has(agent.id)) return
       mounted.add(agent.id)
-      Promise.resolve(mountWorkspace(agent.ctx, agentWorkspace(agent, config), config, clientModule, logger))
+      const sessionId = agent.session?.id ?? agent.session?.header?.id ?? agent.id
+      Promise.resolve(mountWorkspace(agent.ctx, agentWorkspace(agent, config), config, clientModule, logger, sessionId, ctx))
         .catch((error) => {
           ctx.logger.error('[workspace-mcp] agent "%s": mount failed: %s', agent.id, error?.message ?? String(error))
         })
