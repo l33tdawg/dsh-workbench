@@ -1,0 +1,35 @@
+{
+  "name": "@l33tdawg/dsh-approval-memory",
+  "version": "0.1.0",
+  "description": "Remember an approved command prefix in the DeepSeek Harness, so a rule the user wrote once stops the same approval prompt every time.",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "approval",
+    "permissions",
+    "reliability"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "main": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test --experimental-strip-types --test-force-exit \"tests/*.test.ts\""
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

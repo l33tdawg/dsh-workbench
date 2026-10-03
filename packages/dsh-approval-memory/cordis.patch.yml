@@ -1,0 +1,23 @@
+# The approval-memory bundle: answer the approval waterfall from a rules file,
+# so a command prefix the user granted once stops asking every time.
+#
+# Rules are empty here on purpose. A shipped default that allowed something
+# would be a grant nobody asked for; install this and it delegates every
+# request until a rule exists.
+
+- insert:
+    - id: approval-memory
+      name: '@l33tdawg/dsh-approval-memory'
+      config:
+        enabled: true
+        # Outside every session workspace on purpose. A rule file inside the
+        # workspace would be a grant the session could write for itself.
+        rulesFile: ~/.dsh/approval-rules.json
+        # One JSON line per decision. ctx.logger has no sink in any shipped
+        # profile, so this file is the only durable trace of an auto-approval.
+        logFile: ~/.dsh/approval-memory.log
+        # Rules can also be written here, in the profile layer, where they are
+        # part of the composed config. They are merged before the file's.
+        # rules:
+        #   - tool: bash
+        #     prefix: npm test
