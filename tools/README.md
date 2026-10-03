@@ -218,6 +218,11 @@ rather than records of it. Anchor the record itself — `^\{"type":"tool/call"` 
 and keep a second pattern in the same call that must match many lines, so a zero cannot be mistaken
 for a working search.
 
+**A log is evidence about DSH sessions, not about the tree.** This checkout is also edited by tools
+that keep no DSH session log, the user's own Codex sessions among them, so an empty search for a
+write supports "no DSH session made it" and nothing more. On 2026-10-03 a live profile edit looked
+unattributable for exactly that reason before its author turned out to be a Codex session.
+
 ## Why these four and not something else
 
 Each is read from the durable log, so it needs no instrumentation and cannot be gamed by the agent
