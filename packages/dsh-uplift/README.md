@@ -74,5 +74,5 @@ for p in dsh-guidance-pack dsh-apply-patch dsh-edit-feedback dsh-verify-on-edit 
 done
 ```
 
-251 tests across the five. The `edit-feedback` and `verify-on-edit` hook tests drive the real plugin
+281 tests across the five. The `edit-feedback` and `verify-on-edit` hook tests drive the real plugin
 against the installed DSH packages with a fake context, so the wiring is covered without a boot.

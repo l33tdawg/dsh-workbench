@@ -159,7 +159,7 @@ in the current scope.
 npm test
 ```
 
-49 tests, none of which need a harness boot. The parser, matching ladder and application core are
+67 tests, none of which need a harness boot. The parser, matching ladder and application core are
 pure functions over an in-memory file map. Coverage includes every parser rejection, the create /
 update / move paths, trailing-newline preservation, the full tolerance ladder, ambiguity refusal
 and cursor-based disambiguation, atomicity on late failure, duplicate-path rejection, and the

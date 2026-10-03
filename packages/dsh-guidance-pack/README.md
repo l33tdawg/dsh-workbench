@@ -115,7 +115,7 @@ A test enforces these omissions, so a future edit cannot quietly reintroduce dup
 npm test
 ```
 
-19 tests over configuration validation, block selection, rendering, registration, the prompt
+21 tests over configuration validation, block selection, rendering, registration, the prompt
 budget, and the non-duplication guarantees above.
 
 ## Verify what it actually did

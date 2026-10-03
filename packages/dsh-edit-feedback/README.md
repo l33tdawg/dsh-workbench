@@ -115,7 +115,7 @@ purpose.
 ## Development
 
 ```sh
-npm test     # 58 tests: the diff, the rendering, the hook, and the real registry
+npm test     # 59 tests: the diff, the rendering, the hook, and the real registry
 ```
 
 The split is deliberate. `src/diff.ts` and `src/report.ts` import nothing from

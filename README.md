@@ -264,9 +264,9 @@ pin it explicitly on the loader row:
 
 ```sh
 npm install          # dev dependencies only
-npm test             # 77 tests: mapping, substitution, precedence, the SAGE
-                     # HTTP credential path, and a real end-to-end mount that
-                     # spawns a fixture MCP server
+npm test             # 113 tests: 77 for the plugin (mapping, substitution,
+                     # precedence, the SAGE HTTP credential path, and a real
+                     # end-to-end mount) and 36 for the tools
 npm run typecheck    # parse every package and tool the profile loads directly
 ```
 
