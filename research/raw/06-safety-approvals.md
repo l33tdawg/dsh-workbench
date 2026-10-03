@@ -377,6 +377,8 @@ Effort scale: **L** = hours, **M** = a day or two, **H** = a week+.
 
 **Rationale:** The one-shot grant (`types.ts:32`) means prompt count grows linearly with denied-command count. Codex's `ApprovalStore` + prefix rules make it sub-linear (`tools/sandboxing.rs:70-116`; `exec_policy.rs:447-470`). This is the difference between "DSH prompts 6 times for a 6-step install" and "once".
 
+**Built in the plugin shape, 2026-10-03.** [`../../packages/dsh-approval-memory`](../../packages/dsh-approval-memory) answers the `approval/request` waterfall - registered with `prepend`, so it is consulted before the deployment's own answerer - from a rules file of command prefixes, reading the pending call's arguments from the session log by `callId`. That delivers the user-visible half of this recommendation without an upstream change: a prefix granted once stops asking. It does **not** deliver the rest of R3 - no `ApprovalGrant` record, no durable grant event, no `(toolName, prefix, targetMode)` keying, no deny rules - and it cannot land the files listed above, since this repository takes no upstream pull requests. Rules live under `~/.dsh`, outside every session workspace, because a rule file the agent can write is a grant the agent can give itself. Verified live on 2026-10-03: a rule-covered `bash` escalation was answered in 0 ms with no dialog, a command carrying `&&` was refused and asked (2998 ms), and a rule-less tool was delegated (2422 ms).
+
 ---
 
 ### R4 — Add an intermediate widening rung (per-call additional roots / network)

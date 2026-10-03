@@ -20,20 +20,37 @@ Each report has a copy in this directory, byte-identical to what was posted.
 
 8649 was found while verifying the `cordis` preset in a real session. The preset's two tool rows
 work, which is what made the broken third row worth chasing. The workaround that restores the four
-skills in this profile is [`enable-cordis-skills.md`](enable-cordis-skills.md); it is applied and
-verified live as of 2026-10-02.
+skills in this profile is [`enable-cordis-skills.md`](enable-cordis-skills.md); it was superseded on
+2026-10-03 by the repair of the preset's own row in
+[`FINDING-cordis-skill-catalog.md`](FINDING-cordis-skill-catalog.md), which retires the row that
+workaround inserted. Catalog and skills are verified live in a `cordis` session as of 2026-10-03.
+
+## Proposals filed
+
+Feature work goes to `Ideas` rather than `General`, because `General` is the defect channel.
+
+| # | Proposal | Filed |
+|---|---|---|
+| [8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720) | Reuse a server-declared tool catalog across an MCP reconnect. The change is two lines of intent against the SDK's existing response cache; the open question is whether a server that declares no cache lifetime should get a client-side fallback | yes |
+
+The copy is [`../research/upstream/PROPOSAL-mcp-catalog-reuse.md`](../research/upstream/PROPOSAL-mcp-catalog-reuse.md),
+verified byte-identical to the posted body. The analysis and evidence behind it are in
+[`FINDING-mcp-catalog-reuse.md`](FINDING-mcp-catalog-reuse.md).
 
 ## Comments filed
 
 | Discussion | Comment | Filed |
 |---|---|---|
+| [8635](https://github.com/deepseek-ai/deepseek-harness/discussions/8635#discussioncomment-18726817) | The reload boundary, from the shipped `dsh-hmr` watches plus the session logs: root-composition writes land in a running session in seconds, a preset's own definition waits for the next mount; corrects the third event's "manifest-only" attribution and narrows what strands agents | yes |
 | [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18713176) | The same archive path also suppresses the model-facing skill catalog, because the watcher's `stat` throws before discovery runs; adds the `standard` vs `cordis` measurement | yes |
 | [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18715981) | Answer to a comment that attributed the loss to a written `includeDefaultRoots: false`; the field is not written and its schema default is already `true`, so the symptom cannot establish the value | yes |
 | [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18716221) | The absence list swallows `ENOTDIR`, so the archive root cannot be what ends the read; watch and read are two different failures and only the read one produces the registry's "skipped" line; offers a `watch: false` mount as the experiment that separates them | yes |
+| [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18726436) | The catalog half, answered by intervention: replacing the archive root in the preset's own row restores it, which names the completeness gate at `dsh-tool-skill:216`; carries the throwing expression and rules the watcher out | yes |
 
 The bodies are [`BUG-REPORT-asar-skill-roots-ADDENDUM.md`](BUG-REPORT-asar-skill-roots-ADDENDUM.md),
-[`COMMENT-8649-includeDefaultRoots-default.md`](COMMENT-8649-includeDefaultRoots-default.md) and
-[`COMMENT-8649-absent-errors-and-two-paths.md`](COMMENT-8649-absent-errors-and-two-paths.md),
+[`COMMENT-8649-includeDefaultRoots-default.md`](COMMENT-8649-includeDefaultRoots-default.md),
+[`COMMENT-8649-absent-errors-and-two-paths.md`](COMMENT-8649-absent-errors-and-two-paths.md) and
+[`COMMENT-8649-gate2-live-confirmation.md`](COMMENT-8649-gate2-live-confirmation.md),
 posted with [`post-discussion-comment.mjs`](post-discussion-comment.mjs). The first refines 8649
 rather than replacing it: the report's `discoverRoot` guard is still wanted, and the comment covers
 the watch path plus the publisher's refusal to publish an incomplete snapshot. The second answers
@@ -88,6 +105,15 @@ now an open question with a named experiment rather than an assertion: mount the
 survives. Watching off plus a throw means the read owns it; watching off and no throw means the
 watcher does.
 
+Answered on 2026-10-03 by
+[comment 18726436](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18726436),
+without needing that mount. `resolveRootWatchMode` swallows the absence class and returns the
+nearest existing ancestor, so `observeRoots` never throws on the archive root and `complete` is
+still `true` when the read loop starts. Replacing that one root with a readable directory then
+restored the catalog, which no `cordis` session had carried in the two days before it. The read
+owns it, and the two symptoms have one cause: the skipped provider is what flips `complete`, which
+is the gate that suppresses the catalog.
+
 ### 8635 overstated the blast radius
 
 It claimed the session loses "every preset-scoped tool". It does not. Comparing `request/header`
@@ -108,6 +134,31 @@ Both occurrences followed a sandbox escalation, which I had not separated from t
 later session provided the control: four escalated commands (git remote, commit, push, rm) with the
 tool count holding at 66 throughout. Escalation is ruled out. That control is now in the report,
 because a cause I had not excluded is the first thing a reader should ask about.
+
+### 8635's reload boundary, and its third event's attribution
+
+Settled on 2026-10-03 from the shipped `dsh-hmr` source and the session logs, without writing to the
+profile. A patch-file write always recomposes the **root** composition, and that reaches a running
+session 2.5-3.0 s later; a manifest write only matters through the ordered `dsh.profile.bundles`
+list; and nothing on that path re-mounts an agent, so a change to a preset's own definition waits for
+the next mount. The two observations that looked contradictory are the two halves of that rule: four
+running sessions gained `check_claims` 2.5 s to 3.9 min after a 2026-10-02 install, and the
+`preset-cordis` repair on 2026-10-03 produced no tool-surface change at all and no `cordis` skill
+catalog until the app was relaunched 3 h later.
+
+Two corrections follow. The third event's "editing only `package.json`" is not what happened: that
+install wrote both files 3 ms apart, the manifest path alone is gated on the bundle list, and the one
+genuinely manifest-only install in the same profile mounted nothing because its bundle contributes no
+tool. And the loss itself is not a property of the patch layer: the same file, written twice in two
+hours, took 25 tools from four sessions once and added one cleanly the other time. What separates the
+two is the shape of the entry - the destructive write introduced a **new** profile-layer override of
+an existing host-plane row, which the Loader has to dispose and re-create - and that stays a
+hypothesis, recorded as such.
+
+The measurement is [`FINDING-profile-reload-boundary.md`](FINDING-profile-reload-boundary.md) and is
+reproducible with [`../tools/session-reload-census.mjs`](../tools/session-reload-census.mjs). The
+comment body is [`COMMENT-8635-reload-boundary.md`](COMMENT-8635-reload-boundary.md), posted as
+[comment 18726817](https://github.com/deepseek-ai/deepseek-harness/discussions/8635#discussioncomment-18726817).
 
 ### 8637 undercounted by six
 
@@ -230,3 +281,8 @@ unasked.
 Nothing from the original analysis is unfiled. The remaining gaps in
 [`../research/SCORECARD.md`](../research/SCORECARD.md) are feature work, not defects, and belong in
 the repository we control rather than upstream.
+
+The one proposal, [discussion 8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720)
+(Tier 3.8), is filed. Its open policy question is recorded in the post itself, so the thread carries
+the decision rather than this file: whether a client-side fallback lifetime for servers that declare
+nothing is wanted, or whether reuse should be strictly server-declared.
