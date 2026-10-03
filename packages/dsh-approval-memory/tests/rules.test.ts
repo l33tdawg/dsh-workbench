@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { commandFrom, matchRule, operatorIn, parseRules } from '../src/rules.ts'
+import { commandFrom, matchCommand, matchRule, operatorIn, parseRules, segmentsOf } from '../src/rules.ts'
 
 describe('parseRules', () => {
   it('reads a rules object', () => {
@@ -88,6 +88,67 @@ describe('matchRule', () => {
   it('returns the first matching rule', () => {
     const two = [{ tool: 'bash', prefix: 'npm' }, { tool: 'bash', prefix: 'npm test' }]
     assert.equal(matchRule(two, 'bash', 'npm test --watch')?.prefix, 'npm')
+  })
+})
+
+describe('matchCommand', () => {
+  const rules = [
+    { tool: 'bash', prefix: 'cd /work/project' },
+    { tool: 'bash', prefix: 'npm test' },
+    { tool: 'bash', prefix: 'set -e' },
+    { tool: 'bash', prefix: 'git status' },
+  ]
+
+  it('takes the whole-command path when the command has no separators', () => {
+    const matched = matchCommand(rules, 'bash', 'npm test --watch')
+    assert.equal(matched?.via, 'whole')
+    assert.equal(matched?.rule.prefix, 'npm test')
+  })
+
+  it('covers a composite command when every segment has a rule', () => {
+    const matched = matchCommand(rules, 'bash', 'cd /work/project && npm test -- --watch')
+    assert.equal(matched?.via, 'segment')
+    assert.deepEqual(matched?.segments, ['cd /work/project', 'npm test -- --watch'])
+  })
+
+  it('covers a newline-separated script the same way', () => {
+    const matched = matchCommand(rules, 'bash', 'set -e\nnpm test')
+    assert.equal(matched?.via, 'segment')
+  })
+
+  it('treats a pipe as a boundary, so both sides need a rule', () => {
+    assert.equal(matchCommand(rules, 'bash', 'npm test | tee out'), undefined)
+    assert.equal(matchCommand(rules, 'bash', 'git status | tee out'), undefined)
+  })
+
+  it('refuses the whole command when one segment has no rule', () => {
+    assert.equal(matchCommand(rules, 'bash', 'cd /work/project && rm -rf build'), undefined)
+    assert.equal(matchCommand(rules, 'bash', 'npm test; curl example.com'), undefined)
+  })
+
+  it('refuses a segment that could hide a command', () => {
+    assert.equal(matchCommand(rules, 'bash', 'npm test && echo $(rm -rf /)'), undefined)
+    assert.equal(matchCommand(rules, 'bash', 'npm test > /etc/hosts'), undefined)
+    assert.equal(matchCommand(rules, 'bash', 'cd /work/project && rm -rf *'), undefined)
+    assert.equal(matchCommand(rules, 'bash', 'npm test && cat `which sh`'), undefined)
+  })
+
+  it('refuses a single segment that carries a forbidden character', () => {
+    assert.equal(matchCommand(rules, 'bash', 'npm test > out'), undefined)
+  })
+
+  it('does not match another tool', () => {
+    assert.equal(matchCommand(rules, 'pwsh', 'cd /work/project && npm test'), undefined)
+  })
+})
+
+describe('segmentsOf', () => {
+  it('splits on the separators a shell would run in sequence', () => {
+    assert.deepEqual(segmentsOf('a && b || c ; d | e\nf'), ['a', 'b', 'c', 'd', 'e', 'f'])
+  })
+
+  it('drops empty segments', () => {
+    assert.deepEqual(segmentsOf('a && '), ['a'])
   })
 })
 

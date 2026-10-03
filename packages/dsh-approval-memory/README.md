@@ -49,14 +49,22 @@ merged before the file's.
 
 A rule is read as: *this tool, when the command is this prefix plus arguments*.
 
-- **The whole command must be the prefix.** `npm test` covers `npm test` and
-  `npm test --watch`; it does not cover `npm testing`, and it does not cover
-  `npm test; curl … | sh`. A command containing any shell operator - `;`, `&`,
-  `|`, `<`, `>`, backticks, `$`, parentheses, braces, backslash, `*`, `?`, or a
-  newline - is refused outright, because a prefix is a statement about a
-  command's first words and those characters are statements about the rest of
-  it. Globs are included: a rule for `/tmp/scratch/*` would otherwise cover
-  whatever the glob expanded to.
+- **A command is covered when every part of it is.** `npm test` covers `npm test`
+  and `npm test --watch`, but not `npm testing`. A composite command is split at
+  `&&`, `||`, `;`, `|` and newlines, and allowed only when *every* segment
+  matches a rule — so `cd ~/project && npm test` passes with a rule for each
+  half, while `cd ~/project && rm -rf build` still asks. Nothing runs that a
+  rule does not name.
+- **Some characters are refused whatever the rules say.** `<`, `>`, backticks,
+  `$`, parentheses, braces, backslash, `*` and `?` can hide a command — a
+  substitution, a subshell, a redirection or a glob — so a segment carrying one
+  is refused and the whole command is asked about.
+- **That second limit is the one that bites.** Of the 148 approval asks recorded
+  in this repository's own session logs, 147 were composite commands, 102 were
+  multi-line scripts and 50 carried a heredoc; exactly seven are reachable by a
+  prefix rule at all. Prefix rules are for the command lines a session repeats,
+  not for the scripts it writes — see "What it does not do" below for the shape
+  that workload actually wants.
 - **Write the subcommand, not the program.** `npm test` is a rule. `npm` is a
   grant on `npm publish`, and `git` is a grant on `git push --force`.
 - **A rule also covers the widening the call asked for.** The approval request
@@ -92,6 +100,15 @@ made; what it does not record is who made it.
 
 ## What it does not do
 
+- **No session-scoped grant.** Approving one escalation does not quiet the next,
+  and the measurement says that is the gap that matters here: across this
+  repository's session logs, 191 approval asks were recorded, 189 of them
+  answered by hand, **none rejected**, and 123 of the 148 commands were repeats
+  of a prefix already asked about. The workload is a user saying yes over and
+  over to differently-worded scripts. Codex closes this with a session-scoped
+  approval cache; the harness vocabulary is `allowed-once` only, so a plugin
+  would have to derive the session grant from the log — answering an ask when a
+  human already allowed one of the same kind in that session.
 - **No deny rules.** A rule can only allow; everything else keeps asking.
 - **No per-mode scope.** The request carries no sandbox mode, so a rule cannot
   be limited to "widen to `danger-full-access` only for this command".

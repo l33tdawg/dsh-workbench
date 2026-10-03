@@ -40,7 +40,7 @@ import { join } from 'node:path'
 
 import type { Context } from '@deepseek-ai/cordis'
 
-import { commandFrom, matchRule, parseRules } from './rules.ts'
+import { commandFrom, matchCommand, parseRules } from './rules.ts'
 import type { Rule } from './rules.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -209,9 +209,18 @@ export function apply(ctx: Context, config: Config = {}): void {
       for (const [field, bucket] of byField) {
         const command = pendingCommand(req, field)
         if (command === undefined) continue
-        const rule = matchRule(bucket, req.toolName, command)
-        if (rule === undefined) continue
-        write({ event: 'allowed', tool: req.toolName, rule: rule.prefix, field, command, agent: req.agent.id })
+        const matched = matchCommand(bucket, req.toolName, command)
+        if (matched === undefined) continue
+        write({
+          event: 'allowed',
+          tool: req.toolName,
+          rule: matched.rule.prefix,
+          via: matched.via,
+          ...(matched.segments === undefined ? {} : { segments: matched.segments }),
+          field,
+          command,
+          agent: req.agent.id,
+        })
         return 'allowed-once'
       }
       return await next()
@@ -222,5 +231,5 @@ export function apply(ctx: Context, config: Config = {}): void {
   }, { prepend: true })
 }
 
-export { matchRule, parseRules, commandFrom, operatorIn } from './rules.ts'
-export type { Rule, RuleSet } from './rules.ts'
+export { matchCommand, matchRule, parseRules, commandFrom, operatorIn, segmentsOf } from './rules.ts'
+export type { CommandMatch, Rule, RuleSet } from './rules.ts'
