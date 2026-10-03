@@ -212,11 +212,11 @@ tail -n 300 session.jsonl > tail.jsonl    # 1.5 MB, scanned normally
 
 Two more traps live in the same tool, both hit while writing this. `^` anchors to the start of the
 *file* rather than each line unless you pass `flags: "m"`, so a line-anchored pattern silently
-matches at most one record. And a bare search for a marker is not a count: grepping a live log for
-`verify-on-edit/check` returned 37 hits, nearly all of them the conversation *discussing* the event
-rather than records of it. Anchor the record itself — `^\{"type":"verify-on-edit/check"` with
-`flags: "m"` — and keep a second pattern in the same call that must match many lines, so a zero
-cannot be mistaken for a working search.
+matches at most one record. And a bare search for a marker is not a count: grepping a live log for a
+plugin's event name returned 37 hits, nearly all of them the conversation *discussing* the event
+rather than records of it. Anchor the record itself — `^\{"type":"tool/call"` with `flags: "m"` —
+and keep a second pattern in the same call that must match many lines, so a zero cannot be mistaken
+for a working search.
 
 ## Why these four and not something else
 
@@ -242,6 +242,52 @@ the number as a comparison between two harnesses on the same corpus. It is not a
   silently duplicated the repeat counter. It reported 3; the true value is 0. That is exactly the
   kind of quiet wrongness the whole project is about, and it is why the counters now have tests that
   pin each one to a distinct situation.
+
+## The second question these logs answer
+
+`tools/skill-catalog-census.mjs` counts a different durable record in the same corpus: the synthetic
+`skill-catalog` user message the harness writes when it tells the model which skills exist. It groups
+sessions by their recorded agent preset, because the defect it measures is preset-shaped — `cordis`
+sessions carry none, `standard` sessions carry one each.
+
+```
+$ node tools/skill-catalog-census.mjs
+  preset                sessions  with catalog  catalogs
+  standard                    42            42        47
+  cordis                      16             0         0
+  (no preset recorded)         6             3         3
+```
+
+A catalog that is missing is invisible from inside the session, so this is the measure that decides
+whether a fix worked; `--since` splits the corpus at a fix time, `--preset` narrows to one preset,
+and `--verbose` prints the skill names each session was told about. The mechanism behind the zeros,
+and the profile-layer fix, are in
+[`../patches/FINDING-cordis-skill-catalog.md`](../patches/FINDING-cordis-skill-catalog.md).
+
+## What a profile edit does to a running session
+
+`tools/session-reload-census.mjs` measures the third durable record in the same corpus: the
+`request/header` a session writes once per turn, which carries the tool list the harness sent. Two
+consecutive headers whose tool sets differ are a live tool-surface change, and the harness labels the
+second one `reason=change`.
+
+```
+$ node tools/session-reload-census.mjs
+  sessions analysed:        19
+  sessions with a change:   9
+    additive only           3
+    at least one removal    6
+
+  session-c6397e7b-f69d-446b-8896-02cdac2a7d81  preset=standard  /Users/l33tdawg/nodejs-projects/tii-sage
+    2026-10-02T08:26:21.278Z   67 tools  reason=change
+      + check_claims
+```
+
+The count is the evidence for the boundary discussion #8635 asks about: a profile write that changes
+what the root composition mounts reaches a running session in seconds, while a write to a preset's own
+definition is not consumed until the agent is mounted again. The finding, the measured instants and
+the two corrections it makes to the filed report are in
+[`../patches/FINDING-profile-reload-boundary.md`](../patches/FINDING-profile-reload-boundary.md).
 
 ## Next step
 

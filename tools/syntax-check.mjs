@@ -33,7 +33,7 @@ const DIRECTORIES = ['tools', 'patches']
  * JavaScript and rejects type annotations, so each is parsed as a module with
  * type stripping instead.
  */
-const PACKAGES = ['dsh-compaction-todo', 'dsh-edit-feedback', 'dsh-check-claims', 'dsh-verify-on-edit', 'dsh-apply-patch', 'dsh-guidance-pack']
+const PACKAGES = ['dsh-compaction-todo', 'dsh-edit-feedback', 'dsh-check-claims', 'dsh-verify-on-edit', 'dsh-apply-patch', 'dsh-guidance-pack', 'dsh-approval-memory']
 
 /**
  * Every file under a directory with one extension, recursively.
