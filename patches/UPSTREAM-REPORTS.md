@@ -55,6 +55,7 @@ here is byte-identical to the current body.
 | [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18726436) | The catalog half, answered by intervention: replacing the archive root in the preset's own row restores it, which names the completeness gate at `dsh-tool-skill:216`; carries the throwing expression and rules the watcher out | yes |
 | [8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720#discussioncomment-18745138) | Addendum to the catalog-reuse proposal answering a reviewer's four asks: the three invalidation conditions, two of which are already structural in the pinned SDK (`list_changed` eviction, and the server identity as the cache key); the cache API names with the two concrete lines; and the baseline re-checked at `dsh-v0.2.1-alpha.1`, where the wiring is still absent | yes |
 | [8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720#discussioncomment-18754123) | The reviewer's cheaper third condition, checked against the source: the eviction is a published store method (`ResponseCacheStore.evict('tools/list')`); a missing tool reaches the caller as a generic `ProtocolError` with `-32602` and server-authored text, so it cannot be a typed trigger; and an eviction on its own does not re-list, so the in-place heal needs the error branch to re-sync as well — never a retry, so the failed call is still never re-run | yes |
+| [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18754547) | Confirmation of the catch site a reader supplied, with the boundary the code draws: the catch is per provider, so one throwing provider loses only its own output, and what makes the loss total is the completeness gate returning before the catalog is built; the uncached incomplete snapshot is what makes the repeated `skipped` warning a usable signal | yes |
 
 The bodies are [`BUG-REPORT-asar-skill-roots-ADDENDUM.md`](BUG-REPORT-asar-skill-roots-ADDENDUM.md),
 [`COMMENT-8649-includeDefaultRoots-default.md`](COMMENT-8649-includeDefaultRoots-default.md),
@@ -80,6 +81,14 @@ warns about, so nothing already vendored moved. What the constant is checked aga
 archive's per-file `integrity.hash`: the four library bundles compare byte for byte with their
 `node_modules` copies, both presets hash clean, and all 17 files under the preset's `skills/`
 directory hash clean and match `patches/cordis-skills/` exactly.
+
+The last 8649 comment is a reader handing over the front half of that gate, and the reply confirms it
+while drawing the boundary the code actually draws: the catch is inside the per-provider loop
+(`dsh-skill/lib/index.js:346-356`), so a throwing provider loses only its own output, and the loss
+becomes total one layer up, because the completeness gate returns before the catalog message is
+built. The other half of the observation is kept as the diagnostic it is: an incomplete snapshot is
+never cached, so the same `skipped` warning repeating means the provider is still throwing. Body at
+[`COMMENT-8649-catch-scope-and-uncached-snapshot.md`](COMMENT-8649-catch-scope-and-uncached-snapshot.md).
 
 The 8720 addendum is
 [`COMMENT-8720-invalidation-conditions-and-api.md`](COMMENT-8720-invalidation-conditions-and-api.md).

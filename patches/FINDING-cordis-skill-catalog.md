@@ -176,3 +176,22 @@ watcher cannot be the cause, and the live before and after that the earlier
 comments left open. The two fixes it asks for were already in the report: a
 per-root guard in the discovery loop, and a skipped provider that reports itself
 where a user can see it.
+
+The scope of the loss, and why it repeats, was pinned down on 2026-10-05: a
+reader supplied the catch site, the reply confirms it and draws the boundary, and
+both are archived at
+[`COMMENT-8649-catch-scope-and-uncached-snapshot.md`](COMMENT-8649-catch-scope-and-uncached-snapshot.md)
+([comment 18754547](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18754547)).
+The catch sits inside the per-provider loop (`dsh-skill/lib/index.js:346-356`), so
+a throwing provider loses only its own output — the other providers' candidates,
+and the layer's runtime skills pushed at `:336-345`, survive into
+`collectFresh`, which merges them (`:298-311`). What makes the loss total is
+gate 2: `complete: false` returns before the catalog message is built, so those
+surviving entries are collected and never published. `collect()` writes its
+cache only under `if (result.cacheable)` (`:288-289`) while the hit branch
+reports `cacheable: true` (`:272-275`), so an incomplete snapshot is rediscovered
+on every request, and a repeated `skipped` warning is a usable signal that the
+provider is still throwing. The warning itself is emitted (`:354`) and still
+invisible here, because it goes through `ctx.logger`, which is the separate
+report [2905](https://github.com/deepseek-ai/deepseek-harness/discussions/2905)
+names.
