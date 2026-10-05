@@ -56,6 +56,7 @@ here is byte-identical to the current body.
 | [8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720#discussioncomment-18745138) | Addendum to the catalog-reuse proposal answering a reviewer's four asks: the three invalidation conditions, two of which are already structural in the pinned SDK (`list_changed` eviction, and the server identity as the cache key); the cache API names with the two concrete lines; and the baseline re-checked at `dsh-v0.2.1-alpha.1`, where the wiring is still absent | yes |
 | [8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720#discussioncomment-18754123) | The reviewer's cheaper third condition, checked against the source: the eviction is a published store method (`ResponseCacheStore.evict('tools/list')`); a missing tool reaches the caller as a generic `ProtocolError` with `-32602` and server-authored text, so it cannot be a typed trigger; and an eviction on its own does not re-list, so the in-place heal needs the error branch to re-sync as well — never a retry, so the failed call is still never re-run | yes |
 | [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18754547) | Confirmation of the catch site a reader supplied, with the boundary the code draws: the catch is per provider, so one throwing provider loses only its own output, and what makes the loss total is the completeness gate returning before the catalog is built; the uncached incomplete snapshot is what makes the repeated `skipped` warning a usable signal | yes |
+| [8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720#discussioncomment-18754781) | The reviewer's option table split into the three shapes it conflates — no hook, eviction only, eviction plus re-sync — because healing at the next reconnect requires the eviction and the eviction is code; and the concurrency objection to the re-sync answered from the supervisor, where one serialized sync queue and a generation guard already bound it | yes |
 
 The bodies are [`BUG-REPORT-asar-skill-roots-ADDENDUM.md`](BUG-REPORT-asar-skill-roots-ADDENDUM.md),
 [`COMMENT-8649-includeDefaultRoots-default.md`](COMMENT-8649-includeDefaultRoots-default.md),
@@ -132,6 +133,18 @@ ships: `callTool`'s header-mismatch branch evicts `tools/list`, re-lists and ret
 `-32020` and on the caller not having supplied a `toolDefinition` — which DSH always does.
 Its body is
 [`COMMENT-8720-eviction-primitive-and-error-shape.md`](COMMENT-8720-eviction-primitive-and-error-shape.md).
+
+The reviewer accepted both of those and proposed finalizing with the shape that costs no code, on the
+grounds that the in-place re-list would raise "when to re-list, and what concurrency" all over again.
+That option table conflates two shapes: healing at the next reconnect is a property of the eviction,
+and the eviction is three lines on the same `-32602` branch, so the honest ladder is no hook,
+eviction only, and eviction plus re-sync — with the middle row being the smallest version that makes
+the documented limitation true by construction. The concurrency objection does not survive reading
+the supervisor: every sync already chains through one `syncChain` with an `isCurrent` generation
+guard (`src/connection.ts:200-209`), and the `list_changed` handler re-enters that same path
+(`:330-338`), so the re-sync adds one `tools/list`, not a new hazard — and it never re-runs the
+failed call, which is the property the eviction was chosen for. Body at
+[`COMMENT-8720-eviction-cost-ladder.md`](COMMENT-8720-eviction-cost-ladder.md).
 
 ## Corrections made after filing
 

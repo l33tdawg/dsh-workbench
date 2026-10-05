@@ -88,7 +88,7 @@ Four directories hold the rest:
   asks for: small fixtures run against two configurations that differ only in
   which plugins are mounted, with the patch scored against the fixture's own
   tests. The README states what has and has not been shown.
-- [`patches/`](patches/) — six reports, one proposal and nine comments filed
+- [`patches/`](patches/) — six reports, one proposal and ten comments filed
   against `deepseek-harness`, indexed in
   [`UPSTREAM-REPORTS.md`](patches/UPSTREAM-REPORTS.md), plus the appliers that
   carry local fixes and the corrections made after filing.
