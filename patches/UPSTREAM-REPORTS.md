@@ -31,11 +31,17 @@ Feature work goes to `Ideas` rather than `General`, because `General` is the def
 
 | # | Proposal | Filed |
 |---|---|---|
-| [8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720) | Reuse a server-declared tool catalog across an MCP reconnect. The change is two lines of intent against the SDK's existing response cache; the open question is whether a server that declares no cache lifetime should get a client-side fallback | yes |
+| [8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720) | Reuse a server-declared tool catalog across an MCP reconnect. The change is two lines of intent against the SDK's existing response cache; its open questions are whether a server that declares no cache lifetime should get a client-side fallback, and whether a rebuild after an unknown-tool failure belongs in the change. The invalidation conditions are stated in the post | yes |
 
 The copy is [`../research/upstream/PROPOSAL-mcp-catalog-reuse.md`](../research/upstream/PROPOSAL-mcp-catalog-reuse.md),
 verified byte-identical to the posted body. The analysis and evidence behind it are in
 [`FINDING-mcp-catalog-reuse.md`](FINDING-mcp-catalog-reuse.md).
+
+The body was edited in place on 2026-10-04 to add the invalidation contract (see
+[comment 18745138](https://github.com/deepseek-ai/deepseek-harness/discussions/8720#discussioncomment-18745138)),
+so the proposal states what drops a cached catalog rather than leaving a reader to infer it from a
+comment. The edit added three blocks and removed nothing; the copy
+here is byte-identical to the current body.
 
 ## Comments filed
 
@@ -47,6 +53,8 @@ verified byte-identical to the posted body. The analysis and evidence behind it 
 | [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18715981) | Answer to a comment that attributed the loss to a written `includeDefaultRoots: false`; the field is not written and its schema default is already `true`, so the symptom cannot establish the value | yes |
 | [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18716221) | The absence list swallows `ENOTDIR`, so the archive root cannot be what ends the read; watch and read are two different failures and only the read one produces the registry's "skipped" line; offers a `watch: false` mount as the experiment that separates them | yes |
 | [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649#discussioncomment-18726436) | The catalog half, answered by intervention: replacing the archive root in the preset's own row restores it, which names the completeness gate at `dsh-tool-skill:216`; carries the throwing expression and rules the watcher out | yes |
+| [8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720#discussioncomment-18745138) | Addendum to the catalog-reuse proposal answering a reviewer's four asks: the three invalidation conditions, two of which are already structural in the pinned SDK (`list_changed` eviction, and the server identity as the cache key); the cache API names with the two concrete lines; and the baseline re-checked at `dsh-v0.2.1-alpha.1`, where the wiring is still absent | yes |
+| [8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720#discussioncomment-18754123) | The reviewer's cheaper third condition, checked against the source: the eviction is a published store method (`ResponseCacheStore.evict('tools/list')`); a missing tool reaches the caller as a generic `ProtocolError` with `-32602` and server-authored text, so it cannot be a typed trigger; and an eviction on its own does not re-list, so the in-place heal needs the error branch to re-sync as well — never a retry, so the failed call is still never re-run | yes |
 
 The bodies are [`BUG-REPORT-asar-skill-roots-ADDENDUM.md`](BUG-REPORT-asar-skill-roots-ADDENDUM.md),
 [`COMMENT-8649-includeDefaultRoots-default.md`](COMMENT-8649-includeDefaultRoots-default.md),
@@ -72,6 +80,49 @@ warns about, so nothing already vendored moved. What the constant is checked aga
 archive's per-file `integrity.hash`: the four library bundles compare byte for byte with their
 `node_modules` copies, both presets hash clean, and all 17 files under the preset's `skills/`
 directory hash clean and match `patches/cordis-skills/` exactly.
+
+The 8720 addendum is
+[`COMMENT-8720-invalidation-conditions-and-api.md`](COMMENT-8720-invalidation-conditions-and-api.md).
+[PerryLink's comment](https://github.com/deepseek-ai/deepseek-harness/discussions/8720#discussioncomment-18744426)
+read the proposal as unconditional catalog reuse and asked for the invalidation conditions to be
+written down before a maintainer could accept it. Two of the three it named need no code, which the
+comment shows from the shipped library: the SDK evicts `tools/list` on the inbound `list_changed`
+notification itself, and an entry's storage partition *is* the server's declared identity, so a
+changed `serverInfo.name@version` cannot reach the previous generation's listing. The third,
+rebuilding after an unknown-tool failure, cannot be a typed check — the reference server returns
+`InvalidParams` for a missing tool and for bad arguments alike, and surfaces a handler's own failure
+as an `isError` result — so the comment offers it as its own change and leaves that choice with the
+maintainers.
+
+The baseline question was settled by content hash rather than by reading. `src/tools.ts` and
+`src/connection.ts` are the same blobs at `3e6ed5f11f` and at `dsh-v0.2.1-alpha.1`, so the wiring is
+still absent at the newer revision, and the published `@deepseek-ai/dsh-mcp-client@0.2.1-alpha.1`
+tarball mentions neither `responseCacheStore` nor `defaultCacheTtlMs` anywhere. One correction went
+back the other way: the reviewer's "`latest` is `0.2.0-rc.2`" is true of `@deepseek-ai/dsh` but not of
+the mcp-client package, whose dist-tags are `latest: 0.0.1-rc.1`, `next: 0.2.0-rc.2`,
+`alpha: 0.2.1-alpha.1`. The three conditions were then folded into the post body itself, edited in
+place the same day, so the proposal carries its own invalidation contract instead of relying on a
+reader opening the comments.
+
+The reviewer's follow-up proposed the cheaper form of the third condition — evict the entry and fail
+the call, with no transparent retry — and asked what the failure actually looks like on the wire.
+Both were answerable from the pinned library, and checking them corrected the proposal rather than
+confirming it. The eviction is one published method, `ResponseCacheStore.evict('tools/list')`,
+documented on the interface for exactly that use, so the client-private partition key never has to
+be reconstructed. The failure is not typed: the reference server answers a missing tool with
+`-32602` and the message `Tool <name> not found` (`@modelcontextprotocol/server` 2.0.0
+`dist/mcp-DXXb3Vv3.mjs:1396`), `ProtocolError.fromError` specialises only four shapes and a tool
+miss is none of them, so the caller catches a plain `ProtocolError` whose code it shares with "bad
+arguments" and whose message is server-authored. And the eviction does not re-list by itself: the
+registered definition is captured at sync time, `tools/call` is not a cacheable verb, and
+`syncTools` is reached only from a connect or a `list_changed`, so an eviction-only hook heals at
+the next reconnect rather than the next call. The reply names evict-plus-re-sync as the shape that
+heals in place while keeping the reviewer's property — the failed call is never re-run, so a call
+that may have executed is never executed twice. It closes by recording where the idiom already
+ships: `callTool`'s header-mismatch branch evicts `tools/list`, re-lists and retries once, gated on
+`-32020` and on the caller not having supplied a `toolDefinition` — which DSH always does.
+Its body is
+[`COMMENT-8720-eviction-primitive-and-error-shape.md`](COMMENT-8720-eviction-primitive-and-error-shape.md).
 
 ## Corrections made after filing
 
@@ -286,4 +337,11 @@ the repository we control rather than upstream.
 The one proposal, [discussion 8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720)
 (Tier 3.8), is filed. Its open policy question is recorded in the post itself, so the thread carries
 the decision rather than this file: whether a client-side fallback lifetime for servers that declare
-nothing is wanted, or whether reuse should be strictly server-declared.
+nothing is wanted, or whether reuse should be strictly server-declared. The thread now carries the
+invalidation contract as well — stated in
+[comment 18745138](https://github.com/deepseek-ai/deepseek-harness/discussions/8720#discussioncomment-18745138)
+and folded into the post body the same day — so the fallback question and whether the unknown-tool
+self-heal belongs in the change are both still with the maintainers. The second reply narrowed that
+second question to a choice between two shapes and asked for one of them: evict only, which heals at
+the next reconnect, or evict plus the supervisor's re-sync, which heals on the next call and still
+never retries the failed one.

@@ -151,3 +151,44 @@ The post carries the two behaviours, the SDK seams they use, the `ttlMs: 0` meas
 evidence including the control direction, and the open question: whether a client-side fallback for
 a server that declares nothing is the semantics the maintainers want, or whether reuse should be
 strictly server-declared. The posted body was verified byte-identical to the copy in this repository.
+
+Answered on 2026-10-04 by
+[comment 18745138](https://github.com/deepseek-ai/deepseek-harness/discussions/8720#discussioncomment-18745138),
+body in [`COMMENT-8720-invalidation-conditions-and-api.md`](COMMENT-8720-invalidation-conditions-and-api.md).
+A reviewer read the change as unconditional catalog reuse and asked for its invalidation conditions
+before judging it. Two of the three need no code, because the pinned SDK already supplies them: it
+evicts `tools/list` on the inbound `list_changed` notification, and an entry's partition *is* the
+server's declared identity, so a changed `serverInfo.name@version` cannot reach the previous
+generation's listing. The third — rebuilding after an unknown-tool failure — has no typed trigger to
+match on, since the reference server answers a missing tool and bad arguments with the same
+`InvalidParams` code and returns a handler's own failure as an `isError` result; the comment offers it
+as a separate change and leaves that decision with the maintainers. The addendum also re-checked the
+baseline: `src/tools.ts` and `src/connection.ts` are byte-identical at `3e6ed5f11f` and at
+`dsh-v0.2.1-alpha.1`, and the published `dsh-mcp-client@0.2.1-alpha.1` carries no `responseCacheStore`
+or `defaultCacheTtlMs` at all.
+
+The three conditions were then folded into the post itself, edited in place on 2026-10-04, so the
+proposal states its own invalidation contract and a reader who never opens the comments still sees it.
+The edit is additions-only (13 lines added, none removed), and
+[`../research/upstream/PROPOSAL-mcp-catalog-reuse.md`](../research/upstream/PROPOSAL-mcp-catalog-reuse.md)
+is byte-identical to the current body, verified against the live thread.
+
+Answered again on 2026-10-05 by
+[comment 18754123](https://github.com/deepseek-ai/deepseek-harness/discussions/8720#discussioncomment-18754123),
+body in
+[`COMMENT-8720-eviction-primitive-and-error-shape.md`](COMMENT-8720-eviction-primitive-and-error-shape.md).
+The reviewer accepted the three conditions and proposed a cheaper third one: evict the catalog entry
+on an unknown-tool failure and let the next call re-list, with no transparent retry. Re-checking
+that against the source changed it in two ways. The eviction is one published call
+(`ResponseCacheStore.evict('tools/list')`, on the interface precisely as the method-wide
+bulk-clear), and it does **not** re-list on its own: each registered tool holds the definition
+captured at its sync (`src/tools.ts:151-154`), `tools/call` is outside the five methods the client
+consults the response cache for (`index.mjs:3567-4203`), and `syncTools` is reached only through
+`enqueueSync` (`src/connection.ts:334`, `:357`). An eviction-only hook therefore heals at the next
+reconnect, not the next call, and the reply offers evict-plus-re-sync as the middle shape — it keeps
+the property the reviewer wanted, because the failed call is never re-run. The reply also pins the
+exact error shape the trigger would have to match: a plain `ProtocolError` with `code: -32602`,
+indistinguishable by code or `data` from a bad-arguments failure, which is why the trigger can be
+that code plus a cheap recovery rather than a server-text match. One in-tree precedent is recorded
+with it: `callTool` already does evict → re-list → retry-once for the `-32020` header-mismatch case,
+a branch that DSH's always-supplied `toolDefinition` suppresses.
