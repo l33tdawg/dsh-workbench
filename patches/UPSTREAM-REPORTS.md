@@ -30,9 +30,9 @@ workaround inserted. Catalog and skills are verified live in a `cordis` session 
 stopped: (node:87788) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.` The warning
 was the child's last stderr line, not the cause: both processes were killed by `SIGTRAP`, which the
 shell drops even though `close` supplies it, so the signal survived only in the macOS report written
-beside the crash log. The report carries the trigger measurement — the shipped runtime's
+beside the crash log. The report carries the trigger measurement (the shipped runtime's
 `readFileSync(path, 'utf8')` returns for 500 MiB, throws `ERR_STRING_TOO_LONG` at 600 MiB and 1 GiB,
-and ends the process with `SIGTRAP` at 2 GiB − 1 and above, where system Node `v22.22.0` throws — and
+and ends the process with `SIGTRAP` at 2 GiB - 1 and above, where system Node `v22.22.0` throws), and
 the fix is on the fork branch `fix/host-exit-signal`
 ([`7b59971f7f`](https://github.com/l33tdawg/deepseek-harness/commit/7b59971f7f)).
 
