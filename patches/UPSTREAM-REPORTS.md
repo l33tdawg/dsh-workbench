@@ -15,6 +15,7 @@ channel; four of the five most recent discussions there are defect reports.
 | [8637](https://github.com/deepseek-ai/deepseek-harness/discussions/8637) | Three prompt sections render for agents without the tools they describe | low | yes |
 | [8638](https://github.com/deepseek-ai/deepseek-harness/discussions/8638) | `isConcurrencySafe` is unset on the shell tools | low | yes |
 | [8649](https://github.com/deepseek-ai/deepseek-harness/discussions/8649) | The `cordis` preset loses every filesystem skill in Desktop, because its only skill provider points inside `app.asar` | high | yes |
+| [9246](https://github.com/deepseek-ai/deepseek-harness/discussions/9246) | A Host killed by a signal is reported as a clean stop, and its last stderr line as the cause | medium | yes |
 
 Each report has a copy in this directory, byte-identical to what was posted.
 
@@ -24,6 +25,16 @@ skills in this profile is [`enable-cordis-skills.md`](enable-cordis-skills.md); 
 2026-10-03 by the repair of the preset's own row in
 [`FINDING-cordis-skill-catalog.md`](FINDING-cordis-skill-catalog.md), which retires the row that
 workaround inserted. Catalog and skills are verified live in a `cordis` session as of 2026-10-03.
+
+9246 came out of two Desktop Host deaths on 2026-10-09 that were reported as `dsh desktop host
+stopped: (node:87788) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.` The warning
+was the child's last stderr line, not the cause: both processes were killed by `SIGTRAP`, which the
+shell drops even though `close` supplies it, so the signal survived only in the macOS report written
+beside the crash log. The report carries the trigger measurement — the shipped runtime's
+`readFileSync(path, 'utf8')` returns for 500 MiB, throws `ERR_STRING_TOO_LONG` at 600 MiB and 1 GiB,
+and ends the process with `SIGTRAP` at 2 GiB − 1 and above, where system Node `v22.22.0` throws — and
+the fix is on the fork branch `fix/host-exit-signal`
+([`7b59971f7f`](https://github.com/l33tdawg/deepseek-harness/commit/7b59971f7f)).
 
 ## Proposals filed
 

@@ -22,7 +22,7 @@ Where to start:
   [Install](#install) and [Configuration](#configuration).
 - **Want the evidence?** [The scorecard](research/SCORECARD.md) tracks what has
   been built, what has been measured, and what has not.
-- **Hit the same wall?** Sixteen reports and comments have been filed against
+- **Hit the same wall?** Seventeen reports and comments have been filed against
   Harness itself, indexed in [`patches/`](patches/UPSTREAM-REPORTS.md).
 
 Register the MCP servers a **workspace** declares in `.mcp.json` with DeepSeek

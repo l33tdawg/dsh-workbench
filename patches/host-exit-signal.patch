@@ -1,0 +1,55 @@
+diff --git a/apps/desktop/src/host-process.ts b/apps/desktop/src/host-process.ts
+index 948a88e6b0..2cf74706f8 100644
+--- a/apps/desktop/src/host-process.ts
++++ b/apps/desktop/src/host-process.ts
+@@ -224,9 +224,12 @@ export class DesktopHostProcess {
+     })
+     child.once('error', (error) => { this.fail(error) })
+     this.exitPromise = new Promise<void>((resolve) => {
+-      child.once('close', (code) => {
+-        const suffix = this.stderr.trim() === '' ? '' : `: ${this.stderr.trim()}`
++      child.once('close', (code, signal) => {
++        // The tail is what the Host last wrote, not why it died: a process that
++        // crashes without printing carries only output from before it.
++        const suffix = this.stderr.trim() === '' ? '' : `; last output on stderr: ${this.stderr.trim()}`
+         if (code !== 0 && code !== null) this.fail(new Error(`dsh desktop host exited with ${String(code)}${suffix}`))
++        else if (signal !== null) this.fail(new Error(`dsh desktop host was killed by ${signal}${suffix}`))
+         else this.fail(new Error(`dsh desktop host stopped${suffix}`))
+         resolve()
+       })
+diff --git a/apps/desktop/tests/host-process.spec.ts b/apps/desktop/tests/host-process.spec.ts
+index daeddc74d0..4fe3b9ce04 100644
+--- a/apps/desktop/tests/host-process.spec.ts
++++ b/apps/desktop/tests/host-process.spec.ts
+@@ -23,6 +23,12 @@ const server = createServer((request, response) => {
+     })
+     return
+   }
++  if (request.url === '/killed') {
++    response.end('killing', () => {
++      process.stderr.write('plugin killed', () => process.kill(process.pid, 'SIGKILL'))
++    })
++    return
++  }
+   response.setHeader('content-type', 'application/json')
+   response.end(JSON.stringify({runtime: process.argv[2], profile: process.argv[3], cwd: process.cwd(), nodePath: process.env.NODE_PATH, registry: process.env.NPM_CONFIG_REGISTRY, nodeOptions: process.env.NODE_OPTIONS, runAsNode: process.env.ELECTRON_RUN_AS_NODE, internals: process.execArgv.includes('--expose-internals')}))
+ })
+@@ -159,7 +165,17 @@ describe('desktop host process', () => {
+     const { url } = await host.start()
+     await fetch(new URL('/crash', url))
+     await expect.poll(() => failure.mock.calls.length).toBe(1)
+-    expect(failure).toHaveBeenCalledWith(new Error('dsh desktop host exited with 7: plugin crashed'))
++    expect(failure).toHaveBeenCalledWith(new Error('dsh desktop host exited with 7; last output on stderr: plugin crashed'))
++  })
++
++  it('names the signal when the child is killed instead of exiting', async () => {
++    const runtime = projectWithHost()
++    const failure = vi.fn()
++    const host = hostProcess(runtime, runtime, failure)
++    const { url } = await host.start()
++    await fetch(new URL('/killed', url))
++    await expect.poll(() => failure.mock.calls.length).toBe(1)
++    expect(failure).toHaveBeenCalledWith(new Error('dsh desktop host was killed by SIGKILL; last output on stderr: plugin killed'))
+   })
+ 
+   it('retains only recent diagnostics from a noisy child', async () => {

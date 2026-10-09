@@ -137,13 +137,14 @@ Stated plainly, because an assumed fence is worse than none.
 |---|---|
 | [`mcp-catalog-reuse.patch`](mcp-catalog-reuse.patch), [applier](mcp-catalog-reuse.mjs), [probe](mcp-catalog-reuse-probe.mjs) | Applied and tested in the checkout at `3e6ed5f11f`; filed as [discussion 8720](https://github.com/deepseek-ai/deepseek-harness/discussions/8720). See [`FINDING-mcp-catalog-reuse.md`](FINDING-mcp-catalog-reuse.md). |
 | [`enable-cordis-skill-root.mjs`](enable-cordis-skill-root.mjs) | Applied to the desktop profile 2026-10-03: restates the `cordis` preset with its unreadable `customSkillDirs` root replaced, and retires the row [`enable-cordis-skills.mjs`](enable-cordis-skills.mjs) inserts. Reasoning in [`FINDING-cordis-skill-catalog.md`](FINDING-cordis-skill-catalog.md). |
+| [`host-exit-signal.patch`](host-exit-signal.patch) | The Desktop shell's Host exit reporting loses the terminating signal and presents the child's stderr tail as the cause; filed as [discussion 9246](https://github.com/deepseek-ai/deepseek-harness/discussions/9246) and carried on the fork branch `fix/host-exit-signal` (`7b59971f7f`, based on `5badb15009`). |
 
 ### Documents in this directory
 
 | Document | What it is |
 |---|---|
-| [`UPSTREAM-REPORTS.md`](UPSTREAM-REPORTS.md) | The index: six reports, one proposal and ten comments filed, with the corrections made after filing. |
-| `BUG-REPORT-*.md` | Three report bodies as posted, including the 8649 addendum; the other report copies live in [`../research/upstream/`](../research/upstream). |
+| [`UPSTREAM-REPORTS.md`](UPSTREAM-REPORTS.md) | The index: seven reports, one proposal and ten comments filed, with the corrections made after filing. |
+| `BUG-REPORT-*.md` | Four report bodies as posted, including the 8649 addendum and 9246; the other report copies live in [`../research/upstream/`](../research/upstream). |
 | [`FINDING-profile-reload-boundary.md`](FINDING-profile-reload-boundary.md) | What a profile edit does and does not reach in a running session, measured from `dsh-hmr` and the session logs. |
 | [`FINDING-cordis-skill-catalog.md`](FINDING-cordis-skill-catalog.md) | Which gate loses the `cordis` skill catalog, why the watcher is not the cause, and what the repair does. |
 | [`FINDING-mcp-catalog-reuse.md`](FINDING-mcp-catalog-reuse.md) | The MCP catalog reuse change: what was built, the protocol detail that decided it, and what it does not fix. |
