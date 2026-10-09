@@ -49,6 +49,14 @@ export function workingTreeSource(root: string): ScanSource {
       walk(absolute, root, found)
       return found
     },
+    async size(path: string): Promise<number | undefined> {
+      try {
+        const info = statSync(resolve(root, path))
+        return info.isFile() ? info.size : undefined
+      } catch {
+        return undefined
+      }
+    },
     async read(path: string): Promise<string | undefined> {
       try {
         return readFileSync(resolve(root, path), 'utf8')
@@ -102,6 +110,8 @@ function toPosix(path: string): string {
 export function revisionSource(revision: string, run: RunCommand): ScanSource {
   /** Cache listing results: one ls-tree per path is enough. */
   const listings = new Map<string, string[]>()
+  /** Sizes taken from the same listing, so measuring costs no extra git call. */
+  const sizes = new Map<string, number>()
 
   return {
     describe: `revision ${revision}`,
@@ -110,13 +120,37 @@ export function revisionSource(revision: string, run: RunCommand): ScanSource {
       if (cached !== undefined) return cached
       let out: string
       try {
-        out = await run('git', ['ls-tree', '-r', '--name-only', revision, '--', path])
+        out = await run('git', ['ls-tree', '-r', '-l', revision, '--', path])
       } catch {
         return []
       }
-      const files = out.split('\n').map(line => line.trim()).filter(line => line !== '')
+      const files: string[] = []
+      for (const line of out.split('\n')) {
+        // `<mode> <type> <sha> <size>\t<path>`: the long form carries the byte
+        // count, which is what makes the bound checkable before the read.
+        const tab = line.indexOf('\t')
+        if (tab === -1) continue
+        const name = line.slice(tab + 1).trim()
+        if (name === '') continue
+        files.push(name)
+        const bytes = Number.parseInt(line.slice(0, tab).trim().split(/\s+/)[3] ?? '', 10)
+        if (Number.isSafeInteger(bytes) && bytes >= 0) sizes.set(name, bytes)
+      }
       listings.set(path, files)
       return files
+    },
+    async size(path: string): Promise<number | undefined> {
+      const cached = sizes.get(path)
+      if (cached !== undefined) return cached
+      // A path named as a file is read without listing, so its size comes from
+      // the blob itself rather than from a listing that never ran.
+      try {
+        const out = await run('git', ['cat-file', '-s', `${revision}:${path}`])
+        const bytes = Number.parseInt(out.trim(), 10)
+        return Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : undefined
+      } catch {
+        return undefined
+      }
     },
     async read(path: string): Promise<string | undefined> {
       try {

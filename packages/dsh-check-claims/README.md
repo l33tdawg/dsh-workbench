@@ -117,6 +117,10 @@ The scan reads files into memory and counts with a JavaScript regex, so it is bo
 `maxFiles` (20,000) and `maxFileBytes` (2 MB per file). Reaching either bound sets `incomplete`,
 which is reported rather than hidden. Binary files and dependency directories are skipped.
 
+The size is measured before the file is read. A decode past the runtime's string limit ends the
+process rather than throwing, so a scan that opened the file first would have no error to catch:
+the tool would take the Host down with it instead of reporting an incomplete scan.
+
 An oversized file is the bound that matters most, because it is the one that can hide a match: a
 directory holding one small file and one 4 MB file answers about the small file only. So the size
 bound sets `incomplete` and the reason names the files skipped, and a check that could have found

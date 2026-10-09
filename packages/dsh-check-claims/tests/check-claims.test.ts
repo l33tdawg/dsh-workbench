@@ -39,6 +39,7 @@ function literalSource(files: Record<string, string>): ScanSource {
   return {
     describe: 'fixture',
     list: async (path) => Object.keys(files).filter(key => key.startsWith(path)),
+    size: async (path) => files[path] === undefined ? undefined : Buffer.byteLength(files[path], 'utf8'),
     read: async (path) => files[path],
   }
 }
@@ -179,6 +180,46 @@ describe('the scanner', () => {
     assert.match(result.reason ?? '', /over the 2000-byte limit/)
   })
 
+  // Measured on 2026-10-09: the desktop Host stopped twice while this plugin
+  // scanned a workspace holding a 2.6 GB model file. `readFileSync(path, 'utf8')`
+  // on that file ends the process with SIGTRAP on the runtime the desktop ships
+  // (Node 24.18.1, Electron 44) instead of throwing, so the scan's own catch
+  // never ran, no report was produced, and the whole Host went down with it.
+  // A size asked before the read is what keeps an oversized file unopened.
+  it('never reads a file it has already measured as oversized', async () => {
+    let read = false
+    const source: ScanSource = {
+      describe: 'oversized fixture',
+      list: async () => ['src/huge.bin'],
+      size: async () => 2_600_000_000,
+      read: async () => {
+        read = true
+        return 'needle'
+      },
+    }
+    const result = await scan(source, 'src', undefined, { maxFiles: 100, maxFileBytes: 2000 })
+    assert.equal(read, false, 'an oversized file must not be opened')
+    assert.equal(result.files.length, 0)
+    assert.equal(result.skipped, 1)
+    assert.equal(result.incomplete, true)
+    assert.match(result.reason ?? '', /over the 2000-byte limit/)
+  })
+
+  // The bound still has to hold for a source that cannot measure, or the
+  // pre-read check would just move the hole rather than close it.
+  it('bounds a source that cannot measure from the text it returns', async () => {
+    const source: ScanSource = {
+      describe: 'unmeasurable fixture',
+      list: async () => ['src/big.ts'],
+      size: async () => undefined,
+      read: async () => `needle\n${'x'.repeat(3000)}`,
+    }
+    const result = await scan(source, 'src', undefined, { maxFiles: 100, maxFileBytes: 2000 })
+    assert.equal(result.files.length, 0)
+    assert.equal(result.skipped, 1)
+    assert.equal(result.incomplete, true)
+  })
+
   it('will not report an absence it could not check, so a skipped file cannot pass', async () => {
     const files = { 'src/small.ts': 'nothing here\n', 'src/big.ts': `needle\n${'x'.repeat(3000)}` }
     const counted = countMatches(
@@ -238,6 +279,13 @@ describe('reading outside the workspace', () => {
     assert.equal(await source.read(absolute), 'outside\n', 'the absolute path is not read through the root')
     assert.deepEqual(await source.list(absolute), [relative(outside, absolute)])
   })
+
+  it('measures a file without reading it', async () => {
+    const source = workingTreeSource(outside)
+    const text = 'export const guard = 1\n'
+    assert.equal(await source.size('packages/sandbox/index.ts'), Buffer.byteLength(text, 'utf8'))
+    assert.equal(await source.size('packages/sandbox/missing.ts'), undefined)
+  })
 })
 
 describe('reading a revision', () => {
@@ -246,27 +294,41 @@ describe('reading a revision', () => {
     const calls: string[][] = []
     const run = async (command: string, args: string[]): Promise<string> => {
       calls.push([command, ...args])
-      if (args[0] === 'ls-tree') return 'src/a.ts\n'
+      if (args[0] === 'ls-tree') return '100644 blob 3f7a1c 24\tsrc/a.ts\n'
       if (args[0] === 'show') return 'content at the revision\n'
       throw new Error(`unexpected ${args[0]}`)
     }
     const source = revisionSource('origin/master', run)
     const files = await source.list('src')
+    const size = await source.size('src/a.ts')
     const text = await source.read('src/a.ts')
 
     assert.deepEqual(files, ['src/a.ts'])
+    assert.equal(size, 24, 'the long listing carries the size, so measuring needs no extra call')
     assert.equal(text, 'content at the revision\n')
-    assert.deepEqual(calls[0], ['git', 'ls-tree', '-r', '--name-only', 'origin/master', '--', 'src'])
+    assert.deepEqual(calls[0], ['git', 'ls-tree', '-r', '-l', 'origin/master', '--', 'src'])
     assert.deepEqual(calls[1], ['git', 'show', 'origin/master:src/a.ts'])
   })
 
   it('caches a listing so one path is listed once', async () => {
     let listings = 0
-    const run = async (): Promise<string> => { listings++; return 'a\n' }
+    const run = async (): Promise<string> => { listings++; return '100644 blob 3f7a1c 1\ta\n' }
     const source = revisionSource('HEAD', run)
     await source.list('src')
     await source.list('src')
     assert.equal(listings, 1)
+  })
+
+  it('measures a named revision path through cat-file when nothing listed it', async () => {
+    const calls: string[][] = []
+    const run = async (command: string, args: string[]): Promise<string> => {
+      calls.push([command, ...args])
+      if (args[0] === 'cat-file') return '1234\n'
+      throw new Error(`unexpected ${args[0]}`)
+    }
+    const source = revisionSource('HEAD', run)
+    assert.equal(await source.size('docs/big.md'), 1234)
+    assert.deepEqual(calls[0], ['git', 'cat-file', '-s', 'HEAD:docs/big.md'])
   })
 
   it('reports a missing revision as unreadable rather than empty', async () => {

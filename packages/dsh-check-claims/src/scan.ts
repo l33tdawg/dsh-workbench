@@ -60,6 +60,16 @@ export const DEFAULT_LIMITS: ScanLimits = { maxFiles: 20_000, maxFileBytes: 2_00
 export interface ScanSource {
   /** Lists candidate files under a workspace-relative path, `/`-separated. */
   list: (path: string) => Promise<string[]>
+  /**
+   * One candidate's size in bytes, or `undefined` when it cannot be
+   * determined: an unreadable path, or a source that cannot measure at all.
+   *
+   * Asked before {@link ScanSource.read}, because the size bound is only a
+   * bound when it holds first. This runtime ends the process on the decode of
+   * a file past its string limit instead of throwing, so a scan that reads and
+   * then measures has nothing to catch: it takes the host process down with it.
+   */
+  size: (path: string) => Promise<number | undefined>
   /** Reads one workspace-relative file, or `undefined` when it cannot be read. */
   read: (path: string) => Promise<string | undefined>
   /** Text describing where this source reads from, for the report. */
@@ -97,11 +107,13 @@ function relativize(path: string, base: string | undefined): string {
  * stops with `incomplete: true` once `maxFiles` is reached rather than
  * pretending the remainder does not exist.
  *
- * A file over `maxFileBytes` is skipped, because counting inside a file this
- * tool cannot read is exactly the mistake it exists to prevent: a directory
- * holding one small file and one oversized file would otherwise report the
- * oversized file's contents as absent. Skipping is safe only alongside
- * `incomplete: true`.
+ * A file over `maxFileBytes` is skipped before it is read, because counting
+ * inside a file this tool cannot read is exactly the mistake it exists to
+ * prevent: a directory holding one small file and one oversized file would
+ * otherwise report the oversized file's contents as absent. Reading it first is
+ * not an option: a decode past the runtime's string limit ends the process
+ * rather than throwing, so the bound has to hold before the file is opened.
+ * Skipping is safe only alongside `incomplete: true`.
  *
  * @param source - the injected I/O.
  * @param path - workspace-relative file or directory to cover.
@@ -134,6 +146,14 @@ export async function scan(
         read: files.length,
         skipped,
       }
+    }
+    // Measured first, so a file this scan will refuse to count is never read.
+    // An unknown size falls through to the check after the read.
+    const measured = await source.size(candidate)
+    if (measured !== undefined && measured > limits.maxFileBytes) {
+      skipped++
+      oversized++
+      continue
     }
     const text = await source.read(candidate)
     if (text === undefined) {
