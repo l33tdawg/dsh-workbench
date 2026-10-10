@@ -8,9 +8,10 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
 import { isAbsolute } from 'node:path'
 import { detectCheck } from './detect.ts'
-import type { CheckPlan } from './detect.ts'
+import type { CheckPlan, Detection } from './detect.ts'
 import { parseDiagnostics, summarize } from './parse.ts'
-import { formatReport, readProjectFile, relevantDiagnostics, resolveConfig, shouldCheck } from './report.ts'
+import { formatNoCheck } from './message.ts'
+import { formatReport, listProjectDir, readProjectFile, relevantDiagnostics, resolveConfig, shouldCheck } from './report.ts'
 import type { Config, VerificationOutcome } from './report.ts'
 import { installCompletionGuard, verificationRestricted } from './completion.ts'
 import { currentTurnEvents, recoverEditedPaths } from './session.ts'
@@ -69,21 +70,27 @@ export function apply(ctx: Context, config: Config = {}): void {
   })
 
   // Re-read on a check attempt: editing package.json can change the check itself.
-  const planFor = (root: string): CheckPlan | undefined => resolved.command === undefined
-    ? detectCheck(relative => readProjectFile(root, relative), resolved.allowSlow)
+  // `detection` receives what the pass examined, so a `no-check` outcome can say
+  // what it looked for instead of implying the project declares nothing.
+  const planFor = (root: string, detection?: Detection): CheckPlan | undefined => resolved.command === undefined
+    ? detectCheck(
+        relative => readProjectFile(root, relative), resolved.allowSlow, detection,
+        relative => listProjectDir(root, relative),
+      )
     : { command: resolved.command, label: resolved.label!, cost: 'fast' }
 
   const runCheck = async (
     agent: AgentLike, edited: readonly string[], signal?: AbortSignal,
   ): Promise<VerificationOutcome> => {
-    const outcome = (status: VerificationOutcome['status'], text: string): VerificationOutcome => ({
-      status, summary: bounded(`[verify-on-edit] ${text}`), edited,
+    const outcome = (status: VerificationOutcome['status'], text: string, detail?: string): VerificationOutcome => ({
+      status, summary: bounded(`[verify-on-edit] ${text}${detail === undefined ? '' : ` ${detail}`}`), edited,
     })
     if (signal?.aborted) return outcome('cancelled', 'Check cancelled; these edits remain unverified.')
     const root = agent.session.header.cwd
     if (!root) return outcome('unavailable', 'No session workspace is available; these edits remain unverified.')
-    const plan = planFor(root)
-    if (plan === undefined) return outcome('no-check', 'No project check is configured or detected; these edits remain unverified.')
+    const detection: Detection = { searched: [] }
+    const plan = planFor(root, detection)
+    if (plan === undefined) return outcome('no-check', formatNoCheck(detection))
     if (shell === undefined) return outcome('unavailable', `${plan.label} could not run: the shell service is unavailable.`)
 
     const controller = new AbortController()
@@ -97,7 +104,8 @@ export function apply(ctx: Context, config: Config = {}): void {
       }
       const sandboxPolicy = policyService?.resolve({ session: agent.session })
       const spec = shell.resolve({
-        command: plan.command, workdir: root, timeoutMs: resolved.timeoutMs,
+        command: detection.render?.(plan.command, root, edited) ?? plan.command,
+        workdir: root, timeoutMs: resolved.timeoutMs,
         onExpiry: 'kill', stdoutMaxBytes: 32_768, signal: controller.signal,
         ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
       })
@@ -244,7 +252,8 @@ export function apply(ctx: Context, config: Config = {}): void {
 }
 
 export { detectCheck } from './detect.ts'
-export type { CheckPlan } from './detect.ts'
+export type { CheckPlan, Detection, ListDir, ReadFile } from './detect.ts'
+export { formatNoCheck } from './message.ts'
 export { parseDiagnostics } from './parse.ts'
 export type { Diagnostic } from './parse.ts'
 export { formatReport, relevantDiagnostics, resolveConfig, shouldCheck } from './report.ts'

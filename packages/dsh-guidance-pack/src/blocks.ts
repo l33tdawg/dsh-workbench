@@ -197,7 +197,11 @@ Write the final message as an update from a teammate, not a report. Lead with th
 When the user asks for a review, adopt a review mindset: look for bugs, behavioural regressions,
 risks, and missing tests. The findings are the response — keep any overview brief and place it
 after them, ordered by severity, each citing file and line. If you find nothing, say so plainly
-and name what you could not check.`,
+and name what you could not check.
+
+A request that names specific files scopes the subject, not the evidence. Before asserting a
+finding, read that file's directory for a sibling that settles the question. Otherwise state the
+finding as a hypothesis.`,
   },
   {
     name: 'frontend',

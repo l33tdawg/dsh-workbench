@@ -1,6 +1,6 @@
 /** Real plugin hooks with a controlled shell and a durable session-shaped log. */
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, it } from 'node:test'
@@ -130,6 +130,40 @@ describe('verification wiring and outcomes', () => {
     const h = host({}, root)
     assert.equal((await h.edit()).additionalContexts[0].source.summary, 'verify-on-edit: no-check')
     assert.equal(h.calls.length, 0)
+  })
+  // Reported from a real worktree with 704 passing tests and no project file.
+  // The old notice said nothing was "configured or detected", which read as a
+  // fact about the project rather than about the search that missed the suite.
+  it('names what it searched when it finds no check', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'voe-no-check-')); dirs.push(root)
+    const h = host({}, root)
+    const notice = text(await h.edit())
+    assert.match(notice, /Searched the session workspace for package\.json/)
+    assert.match(notice, /tests\/conftest\.py/)
+    assert.match(notice, /name it with `command`/)
+  })
+  it('turns a worktree with only tests into a runnable check when slow checks are allowed', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'voe-pytest-')); dirs.push(root)
+    mkdirSync(join(root, 'tests'), { recursive: true })
+    writeFileSync(join(root, 'tests', 'conftest.py'), 'import sys')
+    const h = host({ allowSlow: true }, root)
+    assert.equal((await h.edit()).additionalContexts[0].source.summary, 'verify-on-edit: passed')
+    // The suite is the check, and it runs through the parser's `path:line:`
+    // shape rather than pytest's default multi-line traceback.
+    assert.match(h.calls[0].command, /-m pytest --tb=line -q/)
+    assert.equal(h.calls[0].workdir, root)
+  })
+  it('says a found suite was withheld rather than that none exists', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'voe-pytest-slow-')); dirs.push(root)
+    mkdirSync(join(root, 'tests'), { recursive: true })
+    writeFileSync(join(root, 'tests', 'conftest.py'), 'import sys')
+    const h = host({}, root)
+    const result = await h.edit()
+    assert.equal(result.additionalContexts[0].source.summary, 'verify-on-edit: no-check')
+    const notice = text(result)
+    assert.match(notice, /pytest check was available but not run/)
+    assert.match(notice, /allowSlow/)
+    assert.equal(h.calls.length, 0, 'a withheld check must not run')
   })
   it('supports an explicit command and runs it in the session workspace', async () => {
     const h = host({ command: 'pnpm verify --filter web', label: 'web check' })

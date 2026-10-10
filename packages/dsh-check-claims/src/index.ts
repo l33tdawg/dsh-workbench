@@ -249,7 +249,10 @@ export function apply(ctx: {
       + 'tree, which is the difference between a claim about upstream and a claim about your own '
       + 'checkout. Set `root` when the claim is about a tree outside the session workspace: a '
       + 'relative root is resolved against the workspace, an absolute one is used as given, and '
-      + 'the report names the base it actually scanned.',
+      + 'the report names the base it actually scanned. Every path names files on disk, so this '
+      + 'tool cannot check a count that exists only in tool output, such as the number of inbox '
+      + 'items or open tasks a response reports; re-read that response rather than treating a '
+      + 'count here as covering it.',
     parameters: {
       checks: {
         type: 'array',

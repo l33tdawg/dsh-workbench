@@ -5,12 +5,17 @@
  * failures in untouched consumers visible. Paths alone do not establish which
  * changes caused a failure.
  *
- * Four shapes cover the checkers worth supporting:
+ * Five shapes cover the checkers worth supporting:
  *
  *   tsc        src/app.ts(12,5): error TS2322: ...
  *   cargo      src/main.rs:12:5: error[E0308]: ...
  *   ruff, go   src/app.py:12:5: F401 ...
  *   pyright    src/app.py:12:5 - error: ...
+ *   pytest     /abs/path/test_app.py:12: assert 4 == 5
+ *
+ * `pytest` reaches the `path:line:` shape by running with `--tb=line`; its
+ * default traceback puts the location on its own `-->` line and the message
+ * several lines later, which no single-line pattern can join back together.
  *
  * @module @l33tdawg/dsh-verify-on-edit/parse
  */

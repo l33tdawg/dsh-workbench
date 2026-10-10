@@ -44,11 +44,56 @@ A profile can specify the project's command explicitly:
 ```
 
 Without `command`, detection checks the workspace root for an npm `typecheck`,
-`check:types`, or `lint` script, followed by TypeScript, Cargo, Go, and Python config
-markers. A `test` script is eligible only with `allowSlow: true`. Detection runs again
-on each check attempt, so editing the project configuration cannot leave a cached
-command active forever. Detection is a convenience; use an explicit command when the
-repository's actual verification differs.
+`check:types`, or `lint` script, followed by TypeScript, Cargo, Go, and Python
+markers. Detection runs again on each check attempt, so editing the project
+configuration cannot leave a cached command active forever. Detection is a
+convenience; use an explicit command when the repository's actual verification
+differs.
+
+### Python
+
+| What the project declares | Check selected | Cost |
+| --- | --- | --- |
+| `[tool.ruff]` in `pyproject.toml`, or `ruff.toml` | `ruff check --no-cache --select E9,F --output-format concise .` | fast |
+| `ruff` pinned in `requirements*.txt` | the same, over the edited Python files | fast |
+| `[tool.pytest.ini_options]`, `pytest.ini`, or `tests/conftest.py` | `python -m pytest --tb=line -q` | slow |
+| Only `.venv/bin/python` or `venv/bin/python` | `ruff` first, then `pytest` | fast, then slow |
+
+A bare `pyproject.toml` selects nothing. Ruff applies its entire default rule
+set when no selector is given, and applying rules a project never configured
+turns one clean edit into thousands of style diagnostics; `--select E9,F` keeps
+to syntax errors and undefined names. `--no-cache` keeps ruff from aborting when
+its cache directory falls outside the session sandbox. `pytest` needs
+`--tb=line` because its default traceback does not print a location and message
+on one line, which is the only shape the parser can attribute to a file.
+
+**Scope comes from whatever declared the linter.** A `[tool.ruff]` config or a
+`ruff.toml` states which files the project covers, so that run goes over the
+project. A requirements pin states the tool and its rules but no scope — the
+shape a repository takes when its CI lints changed files because the existing
+tree was never fully linted. That run is scoped to the Python files this session
+edited, mirroring the CI job, because a repo-wide run would report every
+pre-existing violation on every edit. With no edited Python file it prints a line
+and exits zero without starting ruff. It never falls back to a project-wide run,
+and it never passes a placeholder filename: ruff reports `E902` for a file that
+does not exist, which reaches the agent as a failure that never happened.
+
+The interpreter is taken from the project's own environment. When the workspace
+has none — a `git worktree` usually does not — the environment of an ancestor is
+borrowed, but only from an ancestor that shares declaration files with the
+workspace, and only within three levels. A container directory that merely holds
+the worktree is never treated as the project.
+
+A whole suite is a `slow` check for a reason: on a large repository it can
+exceed `timeoutMs`. That reports as `timed-out`, never as a pass. For a suite
+that costly, name the project's own narrower target explicitly:
+
+```yaml
+- id: verify-on-edit
+  config:
+    command: 'make test'
+    label: 'project test target'
+```
 
 ## What the model receives
 
@@ -62,7 +107,7 @@ Each attempted check has a bounded outcome notice. Its source is
 | `unparsed` | The command did not pass, but no recognized error locations were found; bounded output is included. |
 | `timed-out` | The shell's deadline stopped the check. |
 | `unavailable` | The checker, shell, workspace, or session policy prevented completion. |
-| `no-check` | No command was configured or detected. |
+| `no-check` | No command was configured or detected. The notice names every declaration file that was searched, and says when a check was found but withheld as slow. |
 
 An explicit current-turn user request to skip tests or checks prevents automatic
 execution after edits as well as at completion. The skipped notice states that
@@ -108,7 +153,7 @@ beyond what that command tests.
 | `label` | `project check` | Name used with an explicit command. |
 | `timeoutMs` | `60000` | Shell deadline; expiry kills the check. |
 | `debounceMs` | `3000` | Minimum interval between edit-triggered checks; final pending edits still flush at completion. |
-| `allowSlow` | `false` | Allow detection to select an npm test script. |
+| `allowSlow` | `false` | Allow detection to select an npm test script or a Python test suite. |
 | `blocking` | `false` | Block on failed or unparsed checks instead of adding advisory context. |
 | `maxPerFile` | `5` | Maximum diagnostics displayed for one file. |
 

@@ -76,6 +76,7 @@ Every package carries its own README, and the directory name is the entry point.
 | [`dsh-check-claims`](packages/dsh-check-claims) | Turns a countable claim into a command with an exact answer, against the working tree or a named revision. |
 | [`dsh-compaction-todo`](packages/dsh-compaction-todo) | Restores saved task state after compaction without duplicate reminders; optionally adds `workflow_context` for the objective, constraints, decisions and remaining checks. |
 | [`dsh-approval-memory`](packages/dsh-approval-memory) | Answers the approval waterfall from command-prefix rules, and for the rest of a session once a human has allowed one escalation of that kind. |
+| [`dsh-recall-gate`](packages/dsh-recall-gate) | Denies the first file-mutating call of a turn until that turn has recalled its memory, so a committed memory naming the tree arrives before the write rather than after. |
 
 ## The rest of the repository
 

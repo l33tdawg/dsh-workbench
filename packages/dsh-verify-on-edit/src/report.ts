@@ -7,7 +7,7 @@
  * @module @l33tdawg/dsh-verify-on-edit/report
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 
 import type { CheckPlan } from './detect.ts'
@@ -188,6 +188,28 @@ export function readProjectFile(root: string, relative: string): string | undefi
   const path = join(root, relative)
   try {
     return existsSync(path) ? readFileSync(path, 'utf8') : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * List a directory's entry names for detection, or `undefined` when it cannot
+ * be read.
+ *
+ * Identification of a borrowed Python environment needs to know what a
+ * directory holds, which no single read answers. Like {@link readProjectFile}
+ * this is plain filesystem access rather than `ctx.fs`: it reads names, not
+ * contents, and an unreadable directory means detection finds nothing rather
+ * than that the check throws.
+ *
+ * @param root - the project root.
+ * @param relative - the directory to list, relative to the root.
+ * @returns the entry names, or `undefined`.
+ */
+export function listProjectDir(root: string, relative: string): string[] | undefined {
+  try {
+    return readdirSync(join(root, relative))
   } catch {
     return undefined
   }

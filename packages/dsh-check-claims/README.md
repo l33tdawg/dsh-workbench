@@ -128,3 +128,15 @@ its pattern in one of them returns `UNKNOWN` rather than `PASS`. A binary or dep
 skipped silently by comparison, since a match inside one is noise rather than evidence.
 
 A count is not an argument. This checks whether a claim is true of the code, not whether it matters.
+
+## What it cannot check
+
+Every path names files on disk, so a count that exists only in a tool response is outside this
+tool's reach. "8 open tasks", "122 retained replies", "count=0, claimed_elsewhere=0" and every
+other number an MCP response reports must be read from that response, and the tool description
+says so, because a scan of the workspace looks like a legitimate way to check them and answers a
+different question.
+
+This is a boundary rather than a gap: the response is the only source for its own count, so there
+is nothing on disk to count. The risk being managed is the one this tool exists for — a check that
+appears to cover a claim and does not.

@@ -1,0 +1,18 @@
+# The recall-gate bundle: refuse the first file-mutating tool call of a turn
+# until that turn has recalled its memory. Inserted as its own row so a profile
+# can tune or disable it without touching any harness row.
+
+- insert:
+    - id: recall-gate
+      name: '@l33tdawg/dsh-recall-gate'
+      config:
+        enabled: true
+        # One recall per turn is the contract these tools describe, so a
+        # completed recall satisfies the rest of the turn.
+        recallTools:
+          - sage_turn
+        writeTools:
+          - edit
+          - write
+          - apply_patch
+          - str_replace_editor
