@@ -121,6 +121,11 @@ baseline and passing plugin tests do not establish improved model quality, for
 the attribution reason given [above](#why-these-plugins-exist).
 After replacing installed plugin code, restart Harness to load the new modules.
 
+[`CHANGELOG.md`](CHANGELOG.md) records what each release changed and what was
+measured before it shipped. It is the source for the annotated tag message
+rather than a copy of it, so the reasoning behind a release is readable from a
+clone.
+
 ## Why workspace-mcp exists
 
 Harness reads MCP server configuration only from its own loader configuration
